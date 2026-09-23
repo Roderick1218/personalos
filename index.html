@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>个人生活 OS</title>
+<link rel="stylesheet" href="css/style.css?v=20260923h">
+</head>
+<body>
+<div id="app">
+  <nav id="sidebar">
+    <div id="sidebar-head">
+      <h1><span class="app-icon">🧭</span><span class="app-title"> 个人生活 OS</span></h1>
+      <button id="sidebar-collapse-btn" title="收起/展开侧边栏">«</button>
+    </div>
+    <div id="nav-content">加载中...</div>
+    <div id="sidebar-tagline">🌱 Small steps every day lead to big results.</div>
+  </nav>
+  <main id="main">
+    <div id="main-inner">
+      <div id="topbar">
+        <div id="global-search">
+          <span id="search-icon">🔍</span>
+          <input type="text" id="search-input" placeholder="搜索交易/薪资/任务/项目/联系人/链接/日记/订阅/提醒...">
+          <div id="search-results"></div>
+        </div>
+      </div>
+      <div id="page-content">加载中...</div>
+    </div>
+  </main>
+  <div id="sidebar-backdrop"></div>
+  <nav id="bottom-nav">
+    <a data-bottom="dashboard" href="#dashboard"><span class="icon">🏠</span>今日</a>
+    <a data-bottom="tasks" href="#tasks"><span class="icon">✅</span>任务</a>
+    <a data-bottom="habits" href="#habits"><span class="icon">🔁</span>习惯</a>
+    <a data-bottom="transactions" href="#transactions"><span class="icon">💰</span>财务</a>
+    <a data-bottom="more" href="#" id="bottom-more"><span class="icon">☰</span>更多</a>
+  </nav>
+</div>
+<div id="modal-root"></div>
+<script src="js/app.js?v=20260923j"></script>
+</body>
+</html>

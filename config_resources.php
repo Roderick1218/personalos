@@ -1,0 +1,616 @@
+<?php
+// 单一配置来源: 后端 API、网站前端、Flutter App 都靠 api.php?action=meta 读这份配置来生成界面。
+// 改这里一处，三边界面都会跟着变。
+//
+// field type: text | textarea | number | decimal | date | time | datetime | select | boolean | fk | tags | json
+// fk 字段: fk_resource 指向另一个 resource, 前端用该 resource 的 display_field 当下拉选项文字
+
+return [
+
+    // ================= 核心 =================
+
+    'project_categories' => [
+        'label' => '项目分类', 'group' => 'core', 'icon' => '🗂️', 'display_field' => 'name',
+        'fields' => [
+            'name'  => ['type' => 'text', 'label' => '分类名称', 'required' => true, 'placeholder' => '如：学习、游戏、副业'],
+            'color' => ['type' => 'color', 'label' => '颜色'],
+        ],
+    ],
+
+    'projects' => [
+        'label' => '项目', 'group' => 'core', 'icon' => '📁', 'display_field' => 'name',
+        'fields' => [
+            'name'        => ['type' => 'text', 'label' => '名称', 'required' => true, 'placeholder' => '如：个人网站改版'],
+            'description' => ['type' => 'textarea', 'label' => '描述', 'placeholder' => '这个项目大概要做什么、为什么要做'],
+            'category_id' => ['type' => 'fk', 'label' => '分类', 'fk_resource' => 'project_categories'],
+            'link'        => ['type' => 'text', 'label' => '链接 (如 GitHub / 游戏官网)', 'placeholder' => 'https://...'],
+            'status'      => ['type' => 'select', 'label' => '状态', 'default' => 'active',
+                'options' => ['active' => '进行中', 'completed' => '已完成', 'archived' => '已归档']],
+            'color'       => ['type' => 'color', 'label' => '颜色'],
+        ],
+        'filters' => [
+            ['field' => 'category_id', 'type' => 'fk_select'],
+        ],
+    ],
+
+    'tasks' => [
+        'label' => '任务', 'group' => 'core', 'icon' => '✅', 'display_field' => 'title',
+        'fields' => [
+            'project_id'  => ['type' => 'fk', 'label' => '所属项目', 'fk_resource' => 'projects'],
+            'tag_id'      => ['type' => 'fk', 'label' => '标签', 'fk_resource' => 'tags', 'fk_filter' => ['module' => 'task']],
+            'title'       => ['type' => 'text', 'label' => '标题', 'required' => true, 'placeholder' => '要做什么？如：交电费'],
+            'description' => ['type' => 'textarea', 'label' => '描述', 'placeholder' => '补充细节 (选填)'],
+            'status'      => ['type' => 'select', 'label' => '状态', 'default' => 'inbox',
+                'options' => ['inbox' => '收件箱', 'today' => '今天', 'upcoming' => '即将到来', 'done' => '已完成']],
+            'priority'    => ['type' => 'select', 'label' => '优先级', 'default' => 'medium',
+                'options' => ['low' => '低', 'medium' => '中', 'high' => '高', 'urgent' => '紧急']],
+            'due_date'    => ['type' => 'date', 'label' => '截止日期'],
+        ],
+        'filters' => [
+            ['field' => 'status', 'type' => 'select'],
+            ['field' => 'priority', 'type' => 'select'],
+            ['field' => 'project_id', 'type' => 'fk_select'],
+            ['field' => 'tag_id', 'type' => 'fk_select'],
+        ],
+    ],
+
+    'habits' => [
+        'label' => '习惯', 'group' => 'personal', 'icon' => '🔁', 'display_field' => 'name',
+        'fields' => [
+            'name'            => ['type' => 'text', 'label' => '习惯名称', 'required' => true, 'placeholder' => '如：喝水、阅读、运动'],
+            'description'     => ['type' => 'textarea', 'label' => '描述', 'placeholder' => '为什么要养成这个习惯 (选填)'],
+            'frequency'       => ['type' => 'select', 'label' => '频率', 'default' => 'daily',
+                'options' => ['daily' => '每天', 'weekly' => '每周', 'custom' => '自定义']],
+            'target_per_week' => ['type' => 'number', 'label' => '每周目标次数'],
+            'color'           => ['type' => 'color', 'label' => '颜色'],
+            'is_active'       => ['type' => 'boolean', 'label' => '启用中', 'default' => true],
+        ],
+    ],
+
+    'habit_logs' => [
+        'label' => '习惯打卡记录', 'group' => 'personal', 'icon' => '✔️', 'display_field' => 'log_date',
+        'fields' => [
+            'habit_id'  => ['type' => 'fk', 'label' => '习惯', 'fk_resource' => 'habits', 'required' => true],
+            'log_date'  => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
+            'completed' => ['type' => 'boolean', 'label' => '已完成', 'default' => true],
+            'note'      => ['type' => 'text', 'label' => '备注'],
+        ],
+    ],
+
+    'journal_entries' => [
+        'label' => '日记', 'group' => 'personal', 'icon' => '📓', 'display_field' => 'entry_date',
+        'fields' => [
+            'entry_date' => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
+            'content'    => ['type' => 'textarea', 'label' => '内容 (支持 Markdown)', 'placeholder' => '今天发生了什么、想到了什么...'],
+            'mood'       => ['type' => 'number', 'label' => '心情 (1-5，1=很差，5=很好)', 'min' => 1, 'max' => 5, 'placeholder' => '1-5'],
+            'tags'       => ['type' => 'tags', 'label' => '标签 (逗号分隔)', 'placeholder' => '如：工作, 旅行'],
+        ],
+        'filters' => [
+            ['field' => 'entry_date', 'type' => 'daterange'],
+            ['field' => 'tags', 'type' => 'tag_search'],
+        ],
+    ],
+
+    'inbox_items' => [
+        'label' => '快速收件箱', 'group' => 'personal', 'icon' => '📥', 'display_field' => 'content',
+        'fields' => [
+            'content'      => ['type' => 'text', 'label' => '内容', 'required' => true, 'placeholder' => '随手记下来，之后再整理'],
+            'item_type'    => ['type' => 'select', 'label' => '类型', 'default' => 'note',
+                'options' => ['task' => '待办', 'idea' => '想法', 'note' => '笔记']],
+            'is_processed' => ['type' => 'boolean', 'label' => '已整理', 'default' => false],
+        ],
+    ],
+
+    // ================= 财务 / 工具 / 个人 (其余原有 A/B 级资源保留原分组标记，仅未在导航展示的不影响) =================
+
+    'categories' => [
+        'label' => '收支分类', 'group' => 'finance', 'icon' => '🏷️', 'display_field' => 'name',
+        'fields' => [
+            'name'  => ['type' => 'text', 'label' => '名称', 'required' => true, 'placeholder' => '如：餐饮、交通、薪水'],
+            'type'  => ['type' => 'select', 'label' => '类型', 'required' => true,
+                'options' => ['income' => '收入', 'expense' => '支出']],
+            'color' => ['type' => 'color', 'label' => '颜色 (图表用)'],
+            'icon'  => ['type' => 'text', 'label' => '图标 (emoji)', 'placeholder' => '🍔'],
+        ],
+    ],
+
+    'banks' => [
+        'label' => '银行列表', 'group' => 'finance', 'icon' => '🏛️', 'display_field' => 'name',
+        'fields' => [
+            'name' => ['type' => 'text', 'label' => '银行名称', 'required' => true, 'placeholder' => '如：Maybank、Public Bank'],
+        ],
+    ],
+
+    'bank_accounts' => [
+        'label' => '银行账户/现金', 'group' => 'finance', 'icon' => '🏦', 'display_field' => 'nickname',
+        'fields' => [
+            'account_kind'    => ['type' => 'select', 'label' => '账户类型', 'required' => true, 'default' => 'bank',
+                'options' => ['bank' => '银行户口', 'cash' => '手头现金', 'ewallet' => '电子钱包']],
+            'bank_id'         => ['type' => 'fk', 'label' => '银行 (现金/电子钱包可留空，没有的银行去"银行列表"自己加)', 'fk_resource' => 'banks'],
+            'nickname'        => ['type' => 'text', 'label' => '账户昵称', 'required' => true, 'placeholder' => '如：主账户、钱包现金'],
+            'account_type'    => ['type' => 'text', 'label' => '账户子类型 (如 Savings/Current，现金可留空)', 'placeholder' => 'Savings'],
+            'account_number'  => ['type' => 'text', 'label' => '账号 (界面只显示末 4 位，现金可留空)', 'placeholder' => '完整账号'],
+            'opening_balance' => ['type' => 'decimal', 'label' => '期初余额 (这个账户第一次开始记账时里面已经有多少钱)', 'default' => 0, 'placeholder' => '0.00'],
+            'is_active'       => ['type' => 'boolean', 'label' => '使用中', 'default' => true],
+        ],
+        'filters' => [
+            ['field' => 'account_kind', 'type' => 'select'],
+        ],
+    ],
+
+    'tags' => [
+        'label' => '标签管理', 'group' => 'tools', 'icon' => '🏷️', 'display_field' => 'name',
+        'fields' => [
+            'name'   => ['type' => 'text', 'label' => '标签名称', 'required' => true, 'placeholder' => '如：工作、旅行'],
+            'color'  => ['type' => 'color', 'label' => '颜色'],
+            'module' => ['type' => 'select', 'label' => '适用模块 (这个标签只会出现在哪个模块的下拉里)', 'required' => true,
+                'options' => ['finance' => '财务', 'task' => '任务', 'link' => '链接']],
+        ],
+    ],
+
+    'salary_profiles' => [
+        'label' => '薪资档案', 'group' => 'finance', 'icon' => '💼', 'display_field' => 'company_name',
+        'note' => '只要填好这里 (公司/基本月薪/EPF %/入账账户/发薪日)，每个月到了"发薪日"系统会自动帮你记一笔发薪记录，不用手动再填一次。如果某个月有花红/津贴等额外收入，发薪日之后去"发薪记录"编辑那一笔加上去就好。',
+        'fields' => [
+            'company_name'         => ['type' => 'text', 'label' => '公司/雇主名称', 'required' => true, 'placeholder' => '如：ABC 有限公司'],
+            'position'             => ['type' => 'text', 'label' => '职位', 'placeholder' => '如：软件工程师'],
+            'basic_salary'         => ['type' => 'decimal', 'label' => '基本月薪', 'required' => true, 'placeholder' => '3000.00'],
+            'salary_frequency'     => ['type' => 'select', 'label' => '发薪频率', 'default' => 'monthly',
+                'options' => ['monthly' => '每月', 'biweekly' => '每两周', 'weekly' => '每周', 'custom' => '不固定']],
+            'salary_payment_day'   => ['type' => 'number', 'label' => '每月发薪日 (1-31，可留空)', 'min' => 1, 'max' => 31],
+            'bank_account_id'      => ['type' => 'fk', 'label' => '入账账户', 'fk_resource' => 'bank_accounts'],
+            'employee_epf_percent' => ['type' => 'decimal', 'label' => '员工 EPF % (默认)', 'default' => 11],
+            'employer_epf_percent' => ['type' => 'decimal', 'label' => '雇主 EPF % (默认)', 'default' => 13],
+            'start_date'           => ['type' => 'date', 'label' => '生效日期', 'required' => true, 'default_today' => true],
+            'end_date'             => ['type' => 'date', 'label' => '结束日期 (在职中可留空)'],
+            'status'               => ['type' => 'select', 'label' => '状态', 'default' => 'active',
+                'options' => ['active' => '在职中', 'inactive' => '已停用']],
+            'notes'                => ['type' => 'textarea', 'label' => '备注'],
+        ],
+        'filters' => [
+            ['field' => 'status', 'type' => 'select'],
+        ],
+    ],
+
+    'salary_payments' => [
+        'label' => '发薪记录', 'group' => 'finance', 'icon' => '🧾', 'display_field' => 'period_label',
+        'note' => '每月固定薪资的记录，系统会在"薪资档案"设置的发薪日自动生成 (备注会写"系统自动生成")，通常不用手动新增。手动新增/编辑只在这些情况才需要：自由职业/一次性收入没有档案、某个月有额外花红津贴要补上、或自动生成的数字要调整。',
+        'fields' => [
+            'salary_profile_id'    => ['type' => 'fk', 'label' => '所属薪资档案 (自由收入可留空)', 'fk_resource' => 'salary_profiles'],
+            'payment_date'         => ['type' => 'date', 'label' => '发薪日期', 'required' => true, 'default_today' => true],
+            'period_label'         => ['type' => 'text', 'label' => '所属周期 (如 2026-09)', 'required' => true, 'placeholder' => '2026-09'],
+            'period_start'         => ['type' => 'date', 'label' => '本期起薪日 (入职/离职当月不足整月时填，用来按比例算基本薪资)'],
+            'period_end'           => ['type' => 'date', 'label' => '本期止薪日 (配合起薪日按比例算)'],
+            'basic_salary'         => ['type' => 'decimal', 'label' => '基本薪资', 'default' => 0],
+            'allowance'            => ['type' => 'decimal', 'label' => '津贴', 'default' => 0],
+            'bonus'                => ['type' => 'decimal', 'label' => '花红', 'default' => 0],
+            'commission'           => ['type' => 'decimal', 'label' => '佣金', 'default' => 0],
+            'other_addition'       => ['type' => 'decimal', 'label' => '其他加项', 'default' => 0],
+            'employee_epf_percent' => ['type' => 'decimal', 'label' => '员工 EPF %', 'default' => 11],
+            'employee_epf_amount'  => ['type' => 'decimal', 'label' => '员工 EPF 金额', 'default' => 0],
+            'employer_epf_percent' => ['type' => 'decimal', 'label' => '雇主 EPF %', 'default' => 13],
+            'employer_epf_amount'  => ['type' => 'decimal', 'label' => '雇主 EPF 金额', 'default' => 0],
+            'other_deductions'     => ['type' => 'decimal', 'label' => '其他扣除', 'default' => 0],
+            'net_salary'           => ['type' => 'decimal', 'label' => '实收净额 (入账金额)', 'required' => true],
+            'bank_account_id'      => ['type' => 'fk', 'label' => '入账账户', 'fk_resource' => 'bank_accounts', 'required' => true],
+            'status'               => ['type' => 'select', 'label' => '状态', 'default' => 'paid',
+                'options' => ['draft' => '草稿 (未记账)', 'pending' => '待发放 (未记账)', 'paid' => '已发放 (计入余额)', 'cancelled' => '已取消 (不计入余额)']],
+            'notes'                => ['type' => 'textarea', 'label' => '备注'],
+        ],
+        'filters' => [
+            ['field' => 'payment_date', 'type' => 'month'],
+            ['field' => 'salary_profile_id', 'type' => 'fk_select'],
+            ['field' => 'status', 'type' => 'select'],
+        ],
+    ],
+
+    'epf_contributions' => [
+        'label' => 'EPF 供款记录', 'group' => 'finance', 'icon' => '🏦', 'display_field' => 'contribution_date',
+        'fields' => [
+            'salary_payment_id'       => ['type' => 'fk', 'label' => '关联发薪记录 (手动额外供款可留空)', 'fk_resource' => 'salary_payments'],
+            'contribution_date'       => ['type' => 'date', 'label' => '供款日期', 'required' => true, 'default_today' => true],
+            'employee_contribution'   => ['type' => 'decimal', 'label' => '员工供款', 'default' => 0],
+            'employer_contribution'   => ['type' => 'decimal', 'label' => '雇主供款', 'default' => 0],
+            'additional_contribution' => ['type' => 'decimal', 'label' => '额外自愿供款', 'default' => 0],
+            'notes'                   => ['type' => 'text', 'label' => '备注'],
+        ],
+        'filters' => [
+            ['field' => 'contribution_date', 'type' => 'month'],
+        ],
+    ],
+
+    'transactions' => [
+        'label' => '财务记账', 'group' => 'finance', 'icon' => '💰', 'display_field' => 'description',
+        'note' => '记一笔账只需要 4 步：① 选"类型" (收入/支出/转账) ② 填金额 ③ 选账户 (钱从/到哪个户口或现金) ④ 选日期，其余都选填。"转账"是自己账户之间调钱 (比如提现到手上)，不算收入也不算支出。',
+        'fields' => [
+            'type'                   => ['type' => 'select', 'label' => '类型 (先选这个，转账才会出现"转入账户")', 'required' => true,
+                'options' => ['income' => '收入', 'expense' => '支出', 'transfer' => '转账 (不计收支)']],
+            'amount'                 => ['type' => 'decimal', 'label' => '金额', 'required' => true, 'placeholder' => '0.00'],
+            'transaction_date'       => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
+            'bank_account_id'        => ['type' => 'fk', 'label' => '账户 (银行/现金)', 'fk_resource' => 'bank_accounts', 'required' => true],
+            'transfer_to_account_id' => ['type' => 'fk', 'label' => '转入账户', 'fk_resource' => 'bank_accounts',
+                'show_when' => ['field' => 'type', 'value' => 'transfer']],
+            'category_id'            => ['type' => 'fk', 'label' => '分类 (选填)', 'fk_resource' => 'categories'],
+            'description'            => ['type' => 'text', 'label' => '说明 (选填)', 'placeholder' => '如：星巴克咖啡、油钱'],
+            'tag_id'                 => ['type' => 'fk', 'label' => '标签 (选填)', 'fk_resource' => 'tags', 'fk_filter' => ['module' => 'finance']],
+            'currency'               => ['type' => 'text', 'label' => '货币', 'default' => 'MYR', 'hidden' => true],
+        ],
+        'filters' => [
+            ['field' => 'transaction_date', 'type' => 'month'],
+            ['field' => 'category_id', 'type' => 'fk_select'],
+            ['field' => 'bank_account_id', 'type' => 'fk_select'],
+            ['field' => 'type', 'type' => 'select'],
+        ],
+    ],
+
+    'budgets' => [
+        'label' => '预算', 'group' => 'A', 'icon' => '📊', 'display_field' => 'month',
+        'fields' => [
+            'category_id' => ['type' => 'fk', 'label' => '分类', 'fk_resource' => 'categories'],
+            'month'       => ['type' => 'date', 'label' => '月份 (选任意一天代表该月)', 'required' => true],
+            'amount'      => ['type' => 'decimal', 'label' => '预算金额', 'required' => true],
+        ],
+    ],
+
+    'subscriptions' => [
+        'label' => '订阅管理', 'group' => 'finance', 'icon' => '🔄', 'display_field' => 'name',
+        'fields' => [
+            'name'              => ['type' => 'text', 'label' => '订阅名称', 'required' => true, 'placeholder' => '如：Netflix、健身房会员'],
+            'cost'              => ['type' => 'decimal', 'label' => '费用', 'required' => true, 'placeholder' => '0.00'],
+            'billing_cycle'     => ['type' => 'select', 'label' => '计费周期', 'default' => 'monthly',
+                'options' => ['monthly' => '每月', 'yearly' => '每年']],
+            'next_billing_date' => ['type' => 'date', 'label' => '下次扣费日期'],
+            'remind_days_before' => ['type' => 'number', 'label' => '提前几天提醒', 'default' => 3],
+            'category'          => ['type' => 'text', 'label' => '分类'],
+            'is_active'         => ['type' => 'boolean', 'label' => '订阅中', 'default' => true],
+            'notes'             => ['type' => 'textarea', 'label' => '备注'],
+        ],
+    ],
+
+    'daily_metrics' => [
+        'label' => '健康指标', 'group' => 'A', 'icon' => '❤️', 'display_field' => 'metric_date',
+        'fields' => [
+            'metric_date' => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
+            'weight_kg'   => ['type' => 'decimal', 'label' => '体重 (kg)'],
+            'sleep_hours' => ['type' => 'decimal', 'label' => '睡眠时长 (小时)'],
+            'water_ml'    => ['type' => 'number', 'label' => '饮水量 (ml)'],
+            'mood'        => ['type' => 'number', 'label' => '心情 (1-5)', 'min' => 1, 'max' => 5],
+            'steps'       => ['type' => 'number', 'label' => '步数'],
+            'notes'       => ['type' => 'text', 'label' => '备注'],
+        ],
+    ],
+
+    'exercises' => [
+        'label' => '训练动作库', 'group' => 'A', 'icon' => '🏋️', 'display_field' => 'name',
+        'fields' => [
+            'name'     => ['type' => 'text', 'label' => '动作名称', 'required' => true],
+            'category' => ['type' => 'text', 'label' => '分类 (胸/背/腿/有氧)'],
+            'notes'    => ['type' => 'textarea', 'label' => '备注'],
+        ],
+    ],
+
+    'workouts' => [
+        'label' => '训练记录', 'group' => 'A', 'icon' => '💪', 'display_field' => 'name',
+        'fields' => [
+            'workout_date' => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
+            'name'         => ['type' => 'text', 'label' => '训练名称'],
+            'notes'        => ['type' => 'textarea', 'label' => '备注'],
+        ],
+    ],
+
+    'workout_sets' => [
+        'label' => '训练组数', 'group' => 'A', 'icon' => '🔢', 'display_field' => 'set_number',
+        'fields' => [
+            'workout_id'   => ['type' => 'fk', 'label' => '训练记录', 'fk_resource' => 'workouts', 'required' => true],
+            'exercise_id'  => ['type' => 'fk', 'label' => '动作', 'fk_resource' => 'exercises', 'required' => true],
+            'set_number'   => ['type' => 'number', 'label' => '第几组', 'required' => true],
+            'reps'         => ['type' => 'number', 'label' => '次数'],
+            'weight_kg'    => ['type' => 'decimal', 'label' => '重量 (kg)'],
+            'rest_seconds' => ['type' => 'number', 'label' => '休息秒数'],
+            'notes'        => ['type' => 'text', 'label' => '备注'],
+        ],
+    ],
+
+    'media_entries' => [
+        'label' => '书影音', 'group' => 'A', 'icon' => '🎬', 'display_field' => 'title',
+        'fields' => [
+            'title'       => ['type' => 'text', 'label' => '标题', 'required' => true],
+            'media_type'  => ['type' => 'select', 'label' => '类型', 'required' => true,
+                'options' => ['book' => '书', 'movie' => '电影', 'tv' => '剧集', 'game' => '游戏']],
+            'status'      => ['type' => 'select', 'label' => '状态', 'default' => 'planned',
+                'options' => ['planned' => '计划中', 'in_progress' => '进行中', 'completed' => '已完成', 'dropped' => '弃坑']],
+            'rating'      => ['type' => 'number', 'label' => '评分 (1-10)', 'min' => 1, 'max' => 10],
+            'started_at'  => ['type' => 'date', 'label' => '开始日期'],
+            'finished_at' => ['type' => 'date', 'label' => '完成日期'],
+            'notes'       => ['type' => 'textarea', 'label' => '摘抄/笔记'],
+        ],
+    ],
+
+    'reading_logs' => [
+        'label' => '阅读进度日志', 'group' => 'A', 'icon' => '📖', 'display_field' => 'log_date',
+        'fields' => [
+            'media_entry_id'  => ['type' => 'fk', 'label' => '书影音', 'fk_resource' => 'media_entries', 'required' => true],
+            'log_date'        => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
+            'progress_note'   => ['type' => 'text', 'label' => '进度说明'],
+            'progress_amount' => ['type' => 'number', 'label' => '页数/分钟数'],
+        ],
+    ],
+
+    'bookmarks' => [
+        'label' => '链接', 'group' => 'tools', 'icon' => '🔗', 'display_field' => 'title',
+        'fields' => [
+            'url'         => ['type' => 'url', 'label' => '链接', 'required' => true, 'placeholder' => 'https://...'],
+            'title'       => ['type' => 'text', 'label' => '标题', 'placeholder' => '这个链接是什么 (选填，留空就显示网址)'],
+            'tag_id'      => ['type' => 'fk', 'label' => '标签', 'fk_resource' => 'tags', 'fk_filter' => ['module' => 'link']],
+            'is_favorite' => ['type' => 'boolean', 'label' => '收藏', 'default' => false],
+            'is_archived' => ['type' => 'boolean', 'label' => '已归档', 'default' => false],
+        ],
+        'filters' => [
+            ['field' => 'tag_id', 'type' => 'fk_select'],
+        ],
+    ],
+
+    'goals' => [
+        'label' => '目标/OKR', 'group' => 'A', 'icon' => '🎯', 'display_field' => 'title',
+        'fields' => [
+            'title'        => ['type' => 'text', 'label' => '目标标题', 'required' => true],
+            'description'  => ['type' => 'textarea', 'label' => '描述'],
+            'period_type'  => ['type' => 'select', 'label' => '周期类型', 'required' => true,
+                'options' => ['year' => '年度', 'quarter' => '季度', 'month' => '月度']],
+            'period_value' => ['type' => 'text', 'label' => '周期值 (如 2026-Q1)', 'required' => true],
+            'status'       => ['type' => 'select', 'label' => '状态', 'default' => 'active',
+                'options' => ['active' => '进行中', 'completed' => '已完成', 'abandoned' => '已放弃']],
+        ],
+    ],
+
+    'key_results' => [
+        'label' => '关键结果', 'group' => 'A', 'icon' => '📈', 'display_field' => 'title',
+        'fields' => [
+            'goal_id'       => ['type' => 'fk', 'label' => '所属目标', 'fk_resource' => 'goals', 'required' => true],
+            'title'         => ['type' => 'text', 'label' => '关键结果', 'required' => true],
+            'target_value'  => ['type' => 'decimal', 'label' => '目标值'],
+            'current_value' => ['type' => 'decimal', 'label' => '当前值', 'default' => 0],
+            'unit'          => ['type' => 'text', 'label' => '单位'],
+        ],
+    ],
+
+    'time_blocks' => [
+        'label' => '时间块/日历', 'group' => 'A', 'icon' => '🗓️', 'display_field' => 'title',
+        'fields' => [
+            'block_date'  => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
+            'start_time'  => ['type' => 'time', 'label' => '开始时间', 'required' => true],
+            'end_time'    => ['type' => 'time', 'label' => '结束时间', 'required' => true],
+            'title'       => ['type' => 'text', 'label' => '标题', 'required' => true],
+            'task_id'     => ['type' => 'fk', 'label' => '关联任务', 'fk_resource' => 'tasks'],
+            'planned'     => ['type' => 'boolean', 'label' => '计划 (否则为实际回顾)', 'default' => true],
+            'actual_note' => ['type' => 'text', 'label' => '实际情况备注'],
+        ],
+    ],
+
+    // ================= B 级：按需扩展 =================
+
+    'contacts' => [
+        'label' => '联系人', 'group' => 'personal', 'icon' => '👥', 'display_field' => 'name',
+        'fields' => [
+            'name'              => ['type' => 'text', 'label' => '姓名', 'required' => true, 'placeholder' => '如：张三'],
+            'birthday'          => ['type' => 'date', 'label' => '生日'],
+            'remind_days_before' => ['type' => 'number', 'label' => '生日提前几天提醒', 'default' => 3, 'placeholder' => '3'],
+            'phone'             => ['type' => 'text', 'label' => '电话', 'placeholder' => '01X-XXXXXXX'],
+            'email'             => ['type' => 'text', 'label' => '邮箱', 'placeholder' => 'name@example.com'],
+            'notes'             => ['type' => 'textarea', 'label' => '备注/礼物想法', 'placeholder' => '喜欢的东西、上次聊到的话题...'],
+            'tags'              => ['type' => 'tags', 'label' => '标签 (逗号分隔，如：大学朋友, 同事)', 'placeholder' => '大学朋友, 同事'],
+            'last_contact_date' => ['type' => 'date', 'label' => '上次联系日期'],
+        ],
+        'filters' => [
+            ['field' => 'name', 'type' => 'text_search'],
+            ['field' => 'tags', 'type' => 'tag_search'],
+        ],
+    ],
+
+    'interactions' => [
+        'label' => '互动记录', 'group' => 'B', 'icon' => '💬', 'display_field' => 'interaction_date',
+        'fields' => [
+            'contact_id'       => ['type' => 'fk', 'label' => '联系人', 'fk_resource' => 'contacts', 'required' => true],
+            'interaction_date' => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
+            'interaction_type' => ['type' => 'select', 'label' => '类型', 'default' => 'other',
+                'options' => ['call' => '通话', 'meet' => '见面', 'message' => '消息', 'gift' => '送礼', 'other' => '其他']],
+            'notes'            => ['type' => 'textarea', 'label' => '备注'],
+        ],
+    ],
+
+    'pantry_items' => [
+        'label' => '食品库存', 'group' => 'B', 'icon' => '🥫', 'display_field' => 'name',
+        'fields' => [
+            'name'        => ['type' => 'text', 'label' => '品名', 'required' => true],
+            'quantity'    => ['type' => 'decimal', 'label' => '数量'],
+            'unit'        => ['type' => 'text', 'label' => '单位'],
+            'expiry_date' => ['type' => 'date', 'label' => '保质期至'],
+            'notes'       => ['type' => 'text', 'label' => '备注'],
+        ],
+    ],
+
+    'recipes' => [
+        'label' => '菜谱', 'group' => 'B', 'icon' => '🍳', 'display_field' => 'title',
+        'fields' => [
+            'title'        => ['type' => 'text', 'label' => '菜名', 'required' => true],
+            'ingredients'  => ['type' => 'textarea', 'label' => '食材'],
+            'instructions' => ['type' => 'textarea', 'label' => '做法'],
+            'tags'         => ['type' => 'tags', 'label' => '标签 (逗号分隔)'],
+        ],
+    ],
+
+    'shopping_list' => [
+        'label' => '购物清单', 'group' => 'B', 'icon' => '🛒', 'display_field' => 'item_name',
+        'fields' => [
+            'item_name'    => ['type' => 'text', 'label' => '物品', 'required' => true],
+            'quantity'     => ['type' => 'text', 'label' => '数量'],
+            'is_purchased' => ['type' => 'boolean', 'label' => '已购买', 'default' => false],
+            'notes'        => ['type' => 'text', 'label' => '备注'],
+        ],
+    ],
+
+    'trips' => [
+        'label' => '旅行计划', 'group' => 'B', 'icon' => '✈️', 'display_field' => 'title',
+        'fields' => [
+            'title'       => ['type' => 'text', 'label' => '旅行标题', 'required' => true],
+            'destination' => ['type' => 'text', 'label' => '目的地'],
+            'start_date'  => ['type' => 'date', 'label' => '开始日期'],
+            'end_date'    => ['type' => 'date', 'label' => '结束日期'],
+            'budget'      => ['type' => 'decimal', 'label' => '预算'],
+            'notes'       => ['type' => 'textarea', 'label' => '备注'],
+        ],
+    ],
+
+    'trip_items' => [
+        'label' => '旅行子项目', 'group' => 'B', 'icon' => '🧳', 'display_field' => 'title',
+        'fields' => [
+            'trip_id'   => ['type' => 'fk', 'label' => '所属旅行', 'fk_resource' => 'trips', 'required' => true],
+            'item_type' => ['type' => 'select', 'label' => '类型', 'required' => true,
+                'options' => ['itinerary' => '行程', 'expense' => '花费', 'checklist' => '清单']],
+            'title'     => ['type' => 'text', 'label' => '标题', 'required' => true],
+            'item_date' => ['type' => 'date', 'label' => '日期'],
+            'amount'    => ['type' => 'decimal', 'label' => '金额'],
+            'is_done'   => ['type' => 'boolean', 'label' => '已完成', 'default' => false],
+            'notes'     => ['type' => 'text', 'label' => '备注'],
+        ],
+    ],
+
+    'skills' => [
+        'label' => '学习/技能', 'group' => 'B', 'icon' => '🧠', 'display_field' => 'name',
+        'fields' => [
+            'name'          => ['type' => 'text', 'label' => '技能名称', 'required' => true],
+            'category'      => ['type' => 'text', 'label' => '分类'],
+            'target_hours'  => ['type' => 'decimal', 'label' => '目标小时数'],
+            'current_hours' => ['type' => 'decimal', 'label' => '已投入小时数', 'default' => 0],
+            'notes'         => ['type' => 'textarea', 'label' => '备注'],
+        ],
+    ],
+
+    'learning_logs' => [
+        'label' => '学习日志', 'group' => 'B', 'icon' => '📚', 'display_field' => 'log_date',
+        'fields' => [
+            'skill_id'         => ['type' => 'fk', 'label' => '技能', 'fk_resource' => 'skills', 'required' => true],
+            'log_date'         => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
+            'duration_minutes' => ['type' => 'number', 'label' => '时长 (分钟)', 'required' => true],
+            'notes'            => ['type' => 'text', 'label' => '笔记'],
+        ],
+    ],
+
+    'reports' => [
+        'label' => '统计报表', 'group' => 'B', 'icon' => '📑', 'display_field' => 'period_start',
+        'fields' => [
+            'report_type'  => ['type' => 'select', 'label' => '类型', 'required' => true,
+                'options' => ['weekly' => '周报', 'monthly' => '月报']],
+            'period_start' => ['type' => 'date', 'label' => '开始日期', 'required' => true],
+            'period_end'   => ['type' => 'date', 'label' => '结束日期', 'required' => true],
+            'content'      => ['type' => 'json', 'label' => '汇总内容 (JSON)', 'required' => true],
+        ],
+    ],
+
+    'ai_conversations' => [
+        'label' => 'AI对话', 'group' => 'B', 'icon' => '🤖', 'display_field' => 'title',
+        'fields' => [
+            'title' => ['type' => 'text', 'label' => '标题'],
+        ],
+    ],
+
+    'ai_messages' => [
+        'label' => 'AI消息记录', 'group' => 'B', 'icon' => '💭', 'display_field' => 'content',
+        'fields' => [
+            'conversation_id' => ['type' => 'fk', 'label' => '对话', 'fk_resource' => 'ai_conversations', 'required' => true],
+            'role'            => ['type' => 'select', 'label' => '角色', 'required' => true,
+                'options' => ['user' => '我', 'assistant' => 'AI']],
+            'content'         => ['type' => 'textarea', 'label' => '内容', 'required' => true],
+        ],
+    ],
+
+    'automations' => [
+        'label' => '自动化规则', 'group' => 'B', 'icon' => '⚙️', 'display_field' => 'name',
+        'fields' => [
+            'name'           => ['type' => 'text', 'label' => '规则名称', 'required' => true],
+            'trigger_type'   => ['type' => 'text', 'label' => '触发类型', 'required' => true],
+            'trigger_config' => ['type' => 'json', 'label' => '触发条件 (JSON)'],
+            'action_type'    => ['type' => 'text', 'label' => '动作类型', 'required' => true],
+            'action_config'  => ['type' => 'json', 'label' => '动作配置 (JSON)'],
+            'is_active'      => ['type' => 'boolean', 'label' => '启用中', 'default' => true],
+        ],
+    ],
+
+    'webhook_logs' => [
+        'label' => 'Webhook日志', 'group' => 'B', 'icon' => '🪝', 'display_field' => 'status',
+        'fields' => [
+            'automation_id' => ['type' => 'fk', 'label' => '自动化规则', 'fk_resource' => 'automations'],
+            'payload'       => ['type' => 'json', 'label' => 'Payload (JSON)'],
+            'status'        => ['type' => 'select', 'label' => '状态', 'required' => true,
+                'options' => ['success' => '成功', 'failed' => '失败']],
+        ],
+    ],
+
+    'profiles' => [
+        'label' => '个人资料', 'group' => 'B', 'icon' => '🙍', 'display_field' => 'display_name',
+        'fields' => [
+            'display_name' => ['type' => 'text', 'label' => '显示名称'],
+            'timezone'     => ['type' => 'text', 'label' => '时区', 'default' => 'Asia/Kuala_Lumpur'],
+            'locale'       => ['type' => 'text', 'label' => '语言', 'default' => 'zh-CN'],
+            'avatar_text'  => ['type' => 'text', 'label' => '头像文字'],
+        ],
+    ],
+
+    'settings' => [
+        'label' => '设置', 'group' => 'B', 'icon' => '🔧', 'display_field' => 'key',
+        'fields' => [
+            'key'   => ['type' => 'text', 'label' => '设置键名', 'required' => true],
+            'value' => ['type' => 'json', 'label' => '值 (JSON)'],
+        ],
+    ],
+
+    'reminders' => [
+        'label' => '通用提醒', 'group' => 'system', 'icon' => '⏰', 'display_field' => 'message',
+        'note' => '提醒时间只需要填"几点"，日期系统自动算 (新增时：这个时间点今天还没过就是今天，过了就是明天；重复的提醒之后自动照重复规则一直往后推)。勾选"已发送"或者提醒时间过了没处理，只要设置了"重复"，系统会自动把这条提醒排到下一次，不用自己重新建一条。',
+        'fields' => [
+            'related_type'    => ['type' => 'select', 'label' => '关联类型', 'required' => true,
+                'options' => ['task' => '任务', 'habit' => '习惯', 'subscription' => '订阅', 'custom' => '自定义']],
+            'related_id'      => ['type' => 'number', 'label' => '关联ID (可留空)',
+                'show_when' => ['field' => 'related_type', 'not' => 'custom']],
+            'related_note'    => ['type' => 'text', 'label' => '自定义说明', 'placeholder' => '这个提醒具体是什么事/关联什么',
+                'show_when' => ['field' => 'related_type', 'value' => 'custom']],
+            'remind_at'       => ['type' => 'time', 'label' => '提醒时间 (几点)', 'required' => true],
+            'message'         => ['type' => 'text', 'label' => '提醒内容', 'required' => true, 'placeholder' => '要提醒自己什么事？'],
+            'repeat_rule'     => ['type' => 'select', 'label' => '重复', 'default' => 'none',
+                'options' => ['none' => '不重复', 'daily' => '每天', 'weekly' => '每周', 'biweekly' => '每两周',
+                    'monthly' => '每月', 'yearly' => '每年', 'custom' => '自定义间隔']],
+            'repeat_interval' => ['type' => 'number', 'label' => '每隔几', 'default' => 1, 'min' => 1,
+                'show_when' => ['field' => 'repeat_rule', 'value' => 'custom']],
+            'repeat_unit'     => ['type' => 'select', 'label' => '单位', 'default' => 'day',
+                'options' => ['day' => '天', 'week' => '周', 'month' => '月', 'year' => '年'],
+                'show_when' => ['field' => 'repeat_rule', 'value' => 'custom']],
+            'is_sent'         => ['type' => 'boolean', 'label' => '已发送 (这一次)', 'default' => false],
+        ],
+        'filters' => [
+            ['field' => 'repeat_rule', 'type' => 'select'],
+            ['field' => 'related_type', 'type' => 'select'],
+        ],
+    ],
+
+    'templates' => [
+        'label' => '模板', 'group' => 'B', 'icon' => '📋', 'display_field' => 'name',
+        'fields' => [
+            'template_type' => ['type' => 'select', 'label' => '类型', 'required' => true,
+                'options' => ['task' => '任务', 'habit' => '习惯', 'journal' => '日记']],
+            'name'          => ['type' => 'text', 'label' => '模板名称', 'required' => true],
+            'content'       => ['type' => 'json', 'label' => '内容 (JSON)', 'required' => true],
+        ],
+    ],
+
+    'recurrence_rules' => [
+        'label' => '重复规则', 'group' => 'B', 'icon' => '🔂', 'display_field' => 'related_type',
+        'fields' => [
+            'template_id'  => ['type' => 'fk', 'label' => '关联模板', 'fk_resource' => 'templates'],
+            'related_type' => ['type' => 'select', 'label' => '关联类型', 'required' => true,
+                'options' => ['task' => '任务', 'habit' => '习惯', 'journal' => '日记', 'custom' => '自定义']],
+            'related_id'   => ['type' => 'number', 'label' => '关联ID (可留空)'],
+            'rule'         => ['type' => 'json', 'label' => '规则 (JSON, 如 {"freq":"weekly","interval":1})', 'required' => true],
+        ],
+    ],
+
+];

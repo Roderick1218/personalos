@@ -1,0 +1,62 @@
+# =========================
+# Personal Life OS
+# =========================
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Database / sensitive data
+*.sql
+*.sql.gz
+database/
+backup/
+backups/
+
+# Local personal data
+data/
+storage/
+uploads/
+
+# PHP / local server
+*.log
+logs/
+
+# XAMPP
+xampp/
+php_errorlog
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+build/
+.flutter_tool/
+android/.gradle/
+android/local.properties
+
+# Node
+node_modules/
+
+# Generated files
+dist/
+coverage/
+
+# Test files
+test_output/

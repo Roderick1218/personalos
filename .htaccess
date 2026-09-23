@@ -1,0 +1,10 @@
+# 首页 HTML 和 API 响应绝对不缓存，避免浏览器一直抓着旧版本的 index.html
+# (旧 index.html 里指向旧版本号的 app.js/style.css，导致改了代码用户也看不到更新)。
+# CSS/JS 本身走 ?v=xxx 版本号 query string 来控制刷新，这两者配合才是完整的防缓存方案。
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html|php)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires 0
+  </FilesMatch>
+</IfModule>
