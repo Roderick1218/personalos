@@ -86,8 +86,23 @@ body {
 #sidebar.collapsed #sidebar-collapse-btn { transform: rotate(180deg); }
 #sidebar.collapsed .nav-item { display: flex; justify-content: center; margin: 2px 8px; }
 
-#sidebar-tagline {
+#sidebar-account {
   margin-top: auto;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--light-blue);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+#sidebar-account #sidebar-username { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sidebar-account a { color: var(--light-blue); text-decoration: none; font-size: 14px; opacity: 0.8; }
+#sidebar-account a:hover { opacity: 1; }
+#sidebar.collapsed #sidebar-account { flex-direction: column; }
+#sidebar.collapsed #sidebar-account #sidebar-username { display: none; }
+
+#sidebar-tagline {
   padding: 16px;
   font-size: 12px;
   color: var(--light-blue);
@@ -573,3 +588,30 @@ tr:hover { background: #f9fafb; }
 .item-card-sub { font-size: 12px; color: var(--muted); }
 .item-card-body { font-size: 13px; color: var(--text-body); margin-bottom: 10px; }
 .item-card-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+/* ---------- Login screen (多用户登录) ---------- */
+#login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--sidebar-bg) 0%, var(--navy) 100%);
+  padding: 16px;
+}
+#login-form {
+  background: white;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-hover);
+  padding: 36px 32px;
+  width: 100%;
+  max-width: 360px;
+}
+#login-form h1 { margin: 0 0 4px; font-size: 20px; color: var(--navy); display: flex; align-items: center; gap: 8px; }
+.login-sub { margin: 0 0 22px; font-size: 13px; color: var(--muted); }
+#login-form .field { margin-bottom: 16px; }
+#login-form input {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 14px; font-family: inherit; box-sizing: border-box;
+}
+#login-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+.login-error { color: var(--danger); font-size: 13px; min-height: 18px; margin-bottom: 8px; }

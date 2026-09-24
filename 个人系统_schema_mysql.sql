@@ -14,6 +14,13 @@
 -- transactions 的一笔收入记录 + epf_contributions 的一笔供款记录，这个逻辑写在
 -- api.php 的 sync_salary_payment() 里，不在数据库层 (没用 MySQL trigger)。
 -- 单纯 import 这份 schema 不会有这个联动行为，要连着 api.php 一起用。
+--
+-- v4.8 重要备注 (多用户): 这个系统现在支持多人登录、各自数据隔离。新增了 `users` 表，
+-- 以及 20 张个人数据表 (config_resources.php 里标 user_scoped=true 的那些) 都加了
+-- `user_id` 外键式的整数列 (没有真的建 FK 约束，隔离是 api.php 应用层做的，不是数据库层)。
+-- 单纯 import 这份 schema 不会有登录/隔离行为，同样要连着 api.php 一起用 (api.php 里
+-- session_start() + 每个 action 前置的登录检查 + 通用 CRUD 引擎按 user_id 过滤/盖章)。
+-- 种子数据里已经建了一个初始账号 (Roderick / 123456)，第一次用完记得自己去"系统 > 🔑"改密码。
 -- =====================================================================
 
 CREATE DATABASE IF NOT EXISTS personal_os
@@ -77,6 +84,7 @@ DROP TABLE IF EXISTS `bank_accounts`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `bank_accounts` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `bank_name` varchar(100) NOT NULL,
   `nickname` varchar(100) NOT NULL,
   `account_type` varchar(50) DEFAULT NULL,
@@ -88,6 +96,7 @@ CREATE TABLE `bank_accounts` (
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   KEY `fk_account_bank` (`bank_id`),
+  KEY `idx_bank_accounts_user_id` (`user_id`),
   CONSTRAINT `fk_account_bank` FOREIGN KEY (`bank_id`) REFERENCES `banks` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -96,9 +105,11 @@ DROP TABLE IF EXISTS `banks`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `banks` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `name` varchar(100) NOT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_banks_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `bookmarks`;
@@ -106,6 +117,7 @@ DROP TABLE IF EXISTS `bookmarks`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `bookmarks` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `url` varchar(1000) NOT NULL,
   `title` varchar(255) DEFAULT NULL,
   `is_favorite` tinyint(1) NOT NULL DEFAULT 0,
@@ -115,6 +127,7 @@ CREATE TABLE `bookmarks` (
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   KEY `fk_bookmark_tag` (`tag_id`),
+  KEY `idx_bookmarks_user_id` (`user_id`),
   CONSTRAINT `fk_bookmark_tag` FOREIGN KEY (`tag_id`) REFERENCES `tags` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -137,12 +150,14 @@ DROP TABLE IF EXISTS `categories`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `categories` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `name` varchar(100) NOT NULL,
   `type` enum('income','expense') NOT NULL,
   `color` varchar(20) DEFAULT NULL,
   `icon` varchar(50) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_categories_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `contacts`;
@@ -150,6 +165,7 @@ DROP TABLE IF EXISTS `contacts`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `contacts` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `name` varchar(100) NOT NULL,
   `birthday` date DEFAULT NULL,
   `remind_days_before` int(11) NOT NULL DEFAULT 3,
@@ -159,7 +175,8 @@ CREATE TABLE `contacts` (
   `tags` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`tags`)),
   `last_contact_date` date DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_contacts_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `daily_metrics`;
@@ -167,6 +184,7 @@ DROP TABLE IF EXISTS `daily_metrics`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `daily_metrics` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `metric_date` date NOT NULL,
   `weight_kg` decimal(5,2) DEFAULT NULL,
   `sleep_hours` decimal(4,2) DEFAULT NULL,
@@ -176,7 +194,8 @@ CREATE TABLE `daily_metrics` (
   `notes` varchar(255) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uniq_metric_date` (`metric_date`)
+  UNIQUE KEY `uniq_user_metric_date` (`user_id`,`metric_date`),
+  KEY `idx_daily_metrics_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `epf_contributions`;
@@ -184,6 +203,7 @@ DROP TABLE IF EXISTS `epf_contributions`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `epf_contributions` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `salary_payment_id` int(11) DEFAULT NULL,
   `contribution_date` date NOT NULL,
   `employee_contribution` decimal(12,2) NOT NULL DEFAULT 0.00,
@@ -193,6 +213,7 @@ CREATE TABLE `epf_contributions` (
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   KEY `fk_epf_salary_payment` (`salary_payment_id`),
+  KEY `idx_epf_contributions_user_id` (`user_id`),
   CONSTRAINT `fk_epf_salary_payment` FOREIGN KEY (`salary_payment_id`) REFERENCES `salary_payments` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -226,6 +247,7 @@ DROP TABLE IF EXISTS `habit_logs`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `habit_logs` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `habit_id` int(11) NOT NULL,
   `log_date` date NOT NULL,
   `completed` tinyint(1) NOT NULL DEFAULT 1,
@@ -233,6 +255,7 @@ CREATE TABLE `habit_logs` (
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_habit_date` (`habit_id`,`log_date`),
+  KEY `idx_habit_logs_user_id` (`user_id`),
   CONSTRAINT `habit_logs_ibfk_1` FOREIGN KEY (`habit_id`) REFERENCES `habits` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -241,6 +264,7 @@ DROP TABLE IF EXISTS `habits`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `habits` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `name` varchar(100) NOT NULL,
   `description` text DEFAULT NULL,
   `frequency` enum('daily','weekly','custom') NOT NULL DEFAULT 'daily',
@@ -248,7 +272,8 @@ CREATE TABLE `habits` (
   `color` varchar(20) DEFAULT NULL,
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_habits_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `inbox_items`;
@@ -256,11 +281,13 @@ DROP TABLE IF EXISTS `inbox_items`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `inbox_items` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `content` varchar(500) NOT NULL,
   `item_type` enum('task','idea','note') NOT NULL DEFAULT 'note',
   `is_processed` tinyint(1) NOT NULL DEFAULT 0,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_inbox_items_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `interactions`;
@@ -283,6 +310,7 @@ DROP TABLE IF EXISTS `journal_entries`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `journal_entries` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `entry_date` date NOT NULL,
   `content` mediumtext DEFAULT NULL,
   `mood` tinyint(4) DEFAULT NULL COMMENT '1-5',
@@ -290,7 +318,8 @@ CREATE TABLE `journal_entries` (
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uniq_entry_date` (`entry_date`)
+  UNIQUE KEY `uniq_user_entry_date` (`user_id`,`entry_date`),
+  KEY `idx_journal_entries_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `key_results`;
@@ -373,9 +402,11 @@ DROP TABLE IF EXISTS `project_categories`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `project_categories` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `name` varchar(100) NOT NULL,
   `color` varchar(20) DEFAULT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_project_categories_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `projects`;
@@ -383,6 +414,7 @@ DROP TABLE IF EXISTS `projects`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `projects` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `name` varchar(100) NOT NULL,
   `description` text DEFAULT NULL,
   `category_id` int(11) DEFAULT NULL,
@@ -391,7 +423,8 @@ CREATE TABLE `projects` (
   `color` varchar(20) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_projects_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `reading_logs`;
@@ -442,6 +475,7 @@ DROP TABLE IF EXISTS `reminders`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `reminders` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `related_type` enum('task','habit','subscription','custom') NOT NULL,
   `related_id` int(11) DEFAULT NULL,
   `related_note` varchar(255) DEFAULT NULL COMMENT 'v4.6: 关联类型=custom 时用来自由填写具体是什么事，related_id 对自定义类型没有意义',
@@ -452,7 +486,8 @@ CREATE TABLE `reminders` (
   `repeat_interval` int(11) DEFAULT NULL COMMENT '只在 repeat_rule=custom 时用，配合 repeat_unit',
   `repeat_unit` enum('day','week','month','year') DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_reminders_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `reports`;
@@ -474,6 +509,7 @@ DROP TABLE IF EXISTS `salary_payments`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `salary_payments` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `salary_profile_id` int(11) DEFAULT NULL COMMENT '没有挂档案也可以单独记一笔 (比如自由职业收入)',
   `payment_date` date NOT NULL,
   `period_label` varchar(50) NOT NULL COMMENT '如 2026-09 / September 2026',
@@ -499,6 +535,7 @@ CREATE TABLE `salary_payments` (
   KEY `fk_salary_payment_profile` (`salary_profile_id`),
   KEY `fk_salary_payment_bank` (`bank_account_id`),
   KEY `fk_salary_payment_txn` (`transaction_id`),
+  KEY `idx_salary_payments_user_id` (`user_id`),
   CONSTRAINT `fk_salary_payment_bank` FOREIGN KEY (`bank_account_id`) REFERENCES `bank_accounts` (`id`),
   CONSTRAINT `fk_salary_payment_profile` FOREIGN KEY (`salary_profile_id`) REFERENCES `salary_profiles` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_salary_payment_txn` FOREIGN KEY (`transaction_id`) REFERENCES `transactions` (`id`) ON DELETE SET NULL
@@ -509,6 +546,7 @@ DROP TABLE IF EXISTS `salary_profiles`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `salary_profiles` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `company_name` varchar(150) NOT NULL,
   `position` varchar(150) DEFAULT NULL,
   `basic_salary` decimal(12,2) NOT NULL DEFAULT 0.00,
@@ -525,6 +563,7 @@ CREATE TABLE `salary_profiles` (
   `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`id`),
   KEY `fk_salary_profile_bank` (`bank_account_id`),
+  KEY `idx_salary_profiles_user_id` (`user_id`),
   CONSTRAINT `fk_salary_profile_bank` FOREIGN KEY (`bank_account_id`) REFERENCES `bank_accounts` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -572,6 +611,7 @@ DROP TABLE IF EXISTS `subscriptions`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `subscriptions` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `name` varchar(100) NOT NULL,
   `cost` decimal(10,2) NOT NULL,
   `billing_cycle` enum('monthly','yearly') NOT NULL DEFAULT 'monthly',
@@ -581,7 +621,8 @@ CREATE TABLE `subscriptions` (
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `notes` text DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_subscriptions_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `tags`;
@@ -589,11 +630,13 @@ DROP TABLE IF EXISTS `tags`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `tags` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `name` varchar(100) NOT NULL,
   `color` varchar(20) DEFAULT NULL,
   `module` enum('finance','task','link') NOT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_tags_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `tasks`;
@@ -601,6 +644,7 @@ DROP TABLE IF EXISTS `tasks`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `tasks` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `project_id` int(11) DEFAULT NULL,
   `tag_id` int(11) DEFAULT NULL,
   `title` varchar(255) NOT NULL,
@@ -614,6 +658,7 @@ CREATE TABLE `tasks` (
   PRIMARY KEY (`id`),
   KEY `project_id` (`project_id`),
   KEY `fk_task_tag` (`tag_id`),
+  KEY `idx_tasks_user_id` (`user_id`),
   CONSTRAINT `fk_task_tag` FOREIGN KEY (`tag_id`) REFERENCES `tags` (`id`) ON DELETE SET NULL,
   CONSTRAINT `tasks_ibfk_1` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -653,6 +698,7 @@ DROP TABLE IF EXISTS `transactions`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `transactions` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
   `category_id` int(11) DEFAULT NULL,
   `bank_account_id` int(11) DEFAULT NULL,
   `transfer_to_account_id` int(11) DEFAULT NULL,
@@ -668,6 +714,7 @@ CREATE TABLE `transactions` (
   KEY `fk_txn_bank_account` (`bank_account_id`),
   KEY `fk_txn_transfer_to` (`transfer_to_account_id`),
   KEY `fk_txn_tag` (`tag_id`),
+  KEY `idx_transactions_user_id` (`user_id`),
   CONSTRAINT `fk_txn_bank_account` FOREIGN KEY (`bank_account_id`) REFERENCES `bank_accounts` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_txn_tag` FOREIGN KEY (`tag_id`) REFERENCES `tags` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_txn_transfer_to` FOREIGN KEY (`transfer_to_account_id`) REFERENCES `bank_accounts` (`id`) ON DELETE SET NULL,
@@ -705,6 +752,19 @@ CREATE TABLE `trips` (
   `notes` text DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `users`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `users` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `username` varchar(50) NOT NULL,
+  `password_hash` varchar(255) NOT NULL,
+  `display_name` varchar(100) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `webhook_logs`;
@@ -765,7 +825,14 @@ CREATE TABLE `workouts` (
 
 -- =====================================================================
 -- 初始种子数据 (方便全新环境快速上手，跟这台机器现在实际用的分类/银行差不多)
+--
+-- v4.8: 先建一个初始登录账号 (Roderick / 123456)，下面所有种子数据的 user_id 都挂在
+-- 这个账号名下 (AUTO_INCREMENT 从空表开始，这个 INSERT 一定拿到 id=1，跟各表 user_id
+-- 默认值 1 对上)。第一次用完记得自己去网站左边"系统"分组的 🔑 图标改密码。
 -- =====================================================================
+
+INSERT INTO users (username, password_hash, display_name) VALUES
+  ('Roderick', '$2y$10$lirEi/7bBcqkeNJ4kSOZ1eWJAJSZ8qR.mueoGwa3Cj50gqbKMmFZi', 'Roderick');
 
 INSERT INTO categories (name, type, color) VALUES
   ('薪水', 'income', '#22c55e'),

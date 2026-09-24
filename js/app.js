@@ -27,6 +27,7 @@ const PRIORITY_COLOR = { urgent: '#ef4444', high: '#ef4444', medium: '#f59e0b', 
 const PRIORITY_LABEL = { urgent: '紧急', high: '高', medium: '中', low: '低' };
 
 let RESOURCES = {};      // meta from backend
+let CURRENT_USER = null; // {id, username} — 多用户登录后的当前用户
 const fkCache = {};      // resource -> full list rows (for resolving fk display text, unfiltered)
 const fkFilteredCache = {}; // "resource::{filterJson}" -> filtered list rows (for module-scoped dropdowns e.g. tags)
 
@@ -46,6 +47,11 @@ async function api(payload) {
     body: JSON.stringify(payload),
   });
   const json = await res.json();
+  if (res.status === 401 || json.code === 'AUTH_REQUIRED') {
+    // session 掉了 (比如另一台设备登出、服务器重启清了 session) —— 直接弹回登录页，不留在半吊子界面
+    showLoginScreen();
+    throw new Error(json.error || '请先登录');
+  }
   if (json.ok === false) throw new Error(json.error || '请求失败');
   return json;
 }
@@ -159,6 +165,12 @@ function setupTopbarAndBottomNav() {
 
   setupGlobalSearch();
   setupSidebarCollapse();
+
+  // 用 .onclick 赋值而不是 addEventListener —— 这几个元素是页面固定结构 (不像 nav-content 每次
+  // boot() 都会整个重新生成)，用户登出又重新登入的话 boot() 会再跑一次，addEventListener 会重复绑定
+  document.getElementById('sidebar-username').textContent = '👤 ' + (CURRENT_USER?.username || '');
+  document.getElementById('sidebar-change-pw').onclick = (e) => { e.preventDefault(); openChangePasswordModal(); };
+  document.getElementById('sidebar-logout').onclick = (e) => { e.preventDefault(); logout(); };
 }
 
 // 侧边栏收起/展开 (只影响这台设备/这个浏览器的显示偏好，纯本地记忆，不需要跟服务器同步)
@@ -253,10 +265,10 @@ function renderBackupPage() {
   el.innerHTML = `
     <div class="page-title">💾 备份与恢复</div>
     <div class="card" style="max-width:560px;">
-      <h3>完整数据库 SQL 备份</h3>
+      <h3>导出我的数据</h3>
       <p class="stat-sub" id="backup-status">${backupStatusHtml(lastBackup)}</p>
-      <button class="btn" id="btn-export-sql" style="margin-top:12px;">📦 导出完整数据库 SQL</button>
-      <p class="stat-sub" style="margin-top:14px;">导出内容：全部数据表的结构 + 数据，可直接用 <code>mysql -u root personal_os &lt; 文件.sql</code> 整体还原。请定期导出并妥善保存到本机以外的地方 (比如网盘)，本地 XAMPP 数据库本身不会自动备份。</p>
+      <button class="btn" id="btn-export-sql" style="margin-top:12px;">📦 导出我的数据 (SQL)</button>
+      <p class="stat-sub" style="margin-top:14px;">这个系统现在多人共用，导出的只有你自己账号名下的数据 (不含别人的)，格式是一串 INSERT 语句，不含建表指令。请定期导出并妥善保存到本机以外的地方 (比如网盘)，本地 XAMPP 数据库本身不会自动备份。</p>
     </div>
     <div class="card" style="max-width:560px; margin-top:16px;">
       <h3>各模块 CSV 导出</h3>
@@ -325,9 +337,9 @@ function greetingText() {
   return '晚上好';
 }
 
-function buildDonutHtml(breakdown) {
+function buildDonutHtml(breakdown, centerLabel = '本月支出', emptyText = '这个月还没有支出记录') {
   const total = breakdown.reduce((s, c) => s + c.amount, 0);
-  if (!total) return '<p class="empty">这个月还没有支出记录</p>';
+  if (!total) return `<p class="empty">${escapeHtml(emptyText)}</p>`;
   let cumulative = 0;
   const stops = breakdown.map(c => {
     const start = (cumulative / total) * 360;
@@ -344,7 +356,7 @@ function buildDonutHtml(breakdown) {
   return `
     <div class="donut-wrap">
       <div class="donut" style="background: conic-gradient(${stops});">
-        <div class="donut-center"><span class="amount">RM ${total.toFixed(0)}</span><span class="label">本月支出</span></div>
+        <div class="donut-center"><span class="amount">RM ${total.toFixed(0)}</span><span class="label">${escapeHtml(centerLabel)}</span></div>
       </div>
       <div class="donut-legend">${legend}</div>
     </div>
@@ -376,6 +388,21 @@ function buildAssetBarChart(accounts) {
     `;
   }).join('');
   return bars;
+}
+
+// 资产占比饼图: 复用 buildDonutHtml (它本来就是通用的 {label,color,amount} breakdown 渲染器)，
+// 每个账户一个颜色 (用色板按顺序分配，同类型比如两个银行户口才不会撞色分不清) —— 只放余额>0的账户，
+// 负数/零余额在圆饼图里没意义 (资产分布那个长条图已经能看到负数了)。
+function buildAssetDonutHtml(accounts) {
+  const positive = accounts.filter(a => Number(a.current_balance) > 0);
+  if (!positive.length) return '<p class="empty">还没有正余额的账户</p>';
+  const sorted = [...positive].sort((a, b) => Number(b.current_balance) - Number(a.current_balance));
+  const breakdown = sorted.map((a, i) => ({
+    label: `${ACCOUNT_KIND_ICON[a.account_kind] || '🏦'} ${a.nickname}`,
+    color: COLOR_PALETTE[i % COLOR_PALETTE.length],
+    amount: Number(a.current_balance),
+  }));
+  return buildDonutHtml(breakdown, '总资产', '还没有正余额的账户');
 }
 
 async function renderDashboard() {
@@ -494,10 +521,14 @@ async function renderDashboard() {
       </div>
     </div>
 
-    <div class="dash-row-3">
+    <div class="dash-row-2">
       <div class="card">
         <h3>💼 资产分布 <span class="card-period-badge">实时 ⌄</span></h3>
         ${buildAssetBarChart(d.bank_accounts || [])}
+      </div>
+      <div class="card">
+        <h3>🥧 资产占比</h3>
+        ${buildAssetDonutHtml(d.bank_accounts || [])}
       </div>
     </div>
 
@@ -1398,6 +1429,88 @@ async function submitForm(resourceName, id) {
   }
 }
 
+// ---------------- 登录 / 多用户 ----------------
+
+function showLoginScreen() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+function hideLoginScreen() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+}
+
+// 登录/登出/查状态这几个不走 api() (api() 遇到 401 会自己弹回登录页，这几个本身就是在处理登录页，
+// 会绕圈)，直接用最原始的 fetch。
+async function rawApi(payload) {
+  const res = await fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+function setupLoginForm() {
+  document.getElementById('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = '';
+    const json = await rawApi({ action: 'login', username, password });
+    if (!json.ok) { errEl.textContent = json.error || '登录失败'; return; }
+    CURRENT_USER = json.user;
+    document.getElementById('login-password').value = '';
+    hideLoginScreen();
+    boot();
+  });
+}
+
+async function logout() {
+  if (!confirm('确定要退出登录吗？')) return;
+  await rawApi({ action: 'logout' });
+  CURRENT_USER = null;
+  RESOURCES = {};
+  // 清掉缓存: 下一个登入的可能是别人，不能让上一个用户的下拉选项/资料残留在内存里
+  Object.keys(fkCache).forEach(k => delete fkCache[k]);
+  Object.keys(fkFilteredCache).forEach(k => delete fkFilteredCache[k]);
+  showLoginScreen();
+}
+
+function openChangePasswordModal() {
+  const modalRoot = document.getElementById('modal-root');
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeForm()">
+      <div class="modal">
+        <h3>🔑 修改密码</h3>
+        <div class="field"><label>原密码</label><input type="password" id="pw-old"></div>
+        <div class="field"><label>新密码（至少 4 位）</label><input type="password" id="pw-new"></div>
+        <div class="field"><label>再输入一次新密码</label><input type="password" id="pw-new2"></div>
+        <div class="modal-actions">
+          <button class="btn secondary" onclick="closeForm()" type="button">取消</button>
+          <button class="btn" onclick="submitChangePassword()" type="button">保存</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function submitChangePassword() {
+  const oldPw = document.getElementById('pw-old').value;
+  const newPw = document.getElementById('pw-new').value;
+  const newPw2 = document.getElementById('pw-new2').value;
+  if (!oldPw || !newPw) { alert('请填写原密码和新密码'); return; }
+  if (newPw !== newPw2) { alert('两次输入的新密码不一样'); return; }
+  try {
+    await api({ action: 'change_password', old_password: oldPw, new_password: newPw });
+    closeForm();
+    alert('密码改好了，下次登录用新密码');
+  } catch (e) {
+    alert('修改失败：' + e.message);
+  }
+}
+
 // ---------------- Boot ----------------
 
 async function boot() {
@@ -1409,4 +1522,16 @@ async function boot() {
   router();
 }
 
-boot();
+async function checkAuthAndStart() {
+  setupLoginForm();
+  const json = await rawApi({ action: 'me' });
+  if (json.user) {
+    CURRENT_USER = json.user;
+    hideLoginScreen();
+    boot();
+  } else {
+    showLoginScreen();
+  }
+}
+
+checkAuthAndStart();

@@ -4,9 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>个人生活 OS</title>
-<link rel="stylesheet" href="css/style.css?v=20260923h">
+<link rel="stylesheet" href="css/style.css?v=20260924a">
 </head>
 <body>
+<div id="login-screen" style="display:none;">
+  <form id="login-form">
+    <h1><span class="app-icon">🧭</span> 个人生活 OS</h1>
+    <p class="login-sub">多人共用，登录后只看得到自己的东西</p>
+    <div class="field"><label>用户名</label><input type="text" id="login-username" autocomplete="username" required></div>
+    <div class="field"><label>密码</label><input type="password" id="login-password" autocomplete="current-password" required></div>
+    <div id="login-error" class="login-error"></div>
+    <button type="submit" class="btn" style="width:100%;">登录</button>
+  </form>
+</div>
 <div id="app">
   <nav id="sidebar">
     <div id="sidebar-head">
@@ -14,6 +24,11 @@
       <button id="sidebar-collapse-btn" title="收起/展开侧边栏">«</button>
     </div>
     <div id="nav-content">加载中...</div>
+    <div id="sidebar-account">
+      <span id="sidebar-username"></span>
+      <a id="sidebar-change-pw" href="#" title="修改密码">🔑</a>
+      <a id="sidebar-logout" href="#" title="退出登录">🚪</a>
+    </div>
     <div id="sidebar-tagline">🌱 Small steps every day lead to big results.</div>
   </nav>
   <main id="main">
@@ -38,6 +53,6 @@
   </nav>
 </div>
 <div id="modal-root"></div>
-<script src="js/app.js?v=20260923j"></script>
+<script src="js/app.js?v=20260924a"></script>
 </body>
 </html>

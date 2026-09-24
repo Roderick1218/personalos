@@ -5,7 +5,7 @@
 // field type: text | textarea | number | decimal | date | time | datetime | select | boolean | fk | tags | json
 // fk 字段: fk_resource 指向另一个 resource, 前端用该 resource 的 display_field 当下拉选项文字
 
-return [
+$config = [
 
     // ================= 核心 =================
 
@@ -614,3 +614,20 @@ return [
     ],
 
 ];
+
+// v4.8 多用户: 这些是"个人数据"，每个用户各自独立一份 (包括银行列表/收支分类/标签这些参考清单，
+// 用户明确选了"每个人自己独立一份"而不是全公司共用) —— api.php 在通用 CRUD 引擎最底层，
+// 只要看到这个 resource 有 user_scoped=true，就自动帮它的 list/get/update/delete 加上
+// "AND user_id = 当前登录用户" 的过滤、create 时自动盖上 user_id，不用每个 action 自己记得加。
+// 没在这份名单里的都是隐藏/非核心 resource (目前导航看不到，本来也没有多用户的需求)。
+foreach ([
+    'project_categories', 'projects', 'tasks', 'habits', 'habit_logs', 'inbox_items',
+    'categories', 'banks', 'bank_accounts', 'tags', 'salary_profiles', 'salary_payments',
+    'epf_contributions', 'transactions', 'subscriptions', 'bookmarks', 'contacts',
+    'journal_entries', 'reminders',
+    'daily_metrics', // 虽然不在导航里，但仪表盘的"今日健康"卡片会显示它，一样要隔离
+] as $r) {
+    if (isset($config[$r])) $config[$r]['user_scoped'] = true;
+}
+
+return $config;
