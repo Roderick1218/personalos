@@ -15,6 +15,10 @@
 -- (那些隐藏/未启用的模块本地版本还是不区分用户)。真正迁移到 Supabase 时，这份文件的
 -- RLS 覆盖范围本来就比本地版本广，不用因为本地版本的范围而缩减这里的 policy 列表。
 
+-- gen_random_uuid() 需要这个扩展；Supabase 新项目通常已经默认开了，这里保险起见显式加一次
+-- (IF NOT EXISTS，已经开了也不会报错)。
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- ---------------------------------------------------------------------
 -- 通用: updated_at 自动更新 trigger function
 -- ---------------------------------------------------------------------
@@ -181,6 +185,34 @@ CREATE TABLE transactions (
 -- 在 Postgres 端建议用一个 VIEW 或 RPC function 算这个，而不是每次查询都用子查询(参考 api.php 的 compute_bank_balances 逻辑迁移过来)。
 
 -- =====================================================================
+-- v4.9.5: 定期存款 (Fixed Deposits) —— 用户可选到期后"转入账户"或"自动展期(钱滚钱)"
+-- =====================================================================
+-- 这台机器的 api.php 有 sync_fixed_deposit_open()/auto_generate_due_fixed_deposits() 两个函数，
+-- 纯应用层逻辑，不是数据库触发器，迁移到 Supabase 时务必搬成 Postgres trigger/Edge Function，否则:
+-- ① 新增定存时不会自动从 source_account_id 扣本金 (记一笔支出)；
+-- ② 到期不会自动处理 —— "转入账户"不会把本金+利息存进 destination_account_id (记一笔收入)，
+--    "自动展期"不会把本金+利息开一张新的定存记录 (renewed_from_id 指回上一期，旧的标记 matured)。
+-- 利息用单利算: 本金 × 年利率% × (期限月数/12)。
+CREATE TABLE fixed_deposits (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                 UUID NOT NULL REFERENCES auth.users(id) DEFAULT auth.uid(),
+  bank_id                 UUID REFERENCES banks(id) ON DELETE SET NULL,
+  principal               NUMERIC(12,2) NOT NULL,
+  interest_rate           NUMERIC(5,2) NOT NULL,
+  tenure_months           INT NOT NULL DEFAULT 3,
+  source_account_id       UUID REFERENCES bank_accounts(id) ON DELETE SET NULL,
+  opening_transaction_id  UUID REFERENCES transactions(id) ON DELETE SET NULL,
+  start_date              DATE NOT NULL,
+  maturity_date           DATE,
+  maturity_action         TEXT NOT NULL DEFAULT 'transfer' CHECK (maturity_action IN ('transfer','renew')),
+  destination_account_id  UUID REFERENCES bank_accounts(id) ON DELETE SET NULL,
+  status                  TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','matured','withdrawn')),
+  renewed_from_id         UUID REFERENCES fixed_deposits(id) ON DELETE SET NULL,
+  notes                   TEXT,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- =====================================================================
 -- v3.3: 动态薪资 + EPF 系统 (收入不固定，支持自由职业/佣金/花红/没有薪水的月份)
 -- =====================================================================
 
@@ -235,6 +267,12 @@ CREATE TABLE salary_payments (
 
 -- EPF 供款历史，大部分从 salary_payments 自动产生 (1 笔发薪 = 最多 1 笔供款记录，用 salary_payment_id 当 upsert key)，
 -- 也支持手动补一笔额外/自愿供款 (salary_payment_id 留空)。
+-- v4.9: 2024 年 KWSP 新制度把账户拆成 Akaun Persaraan (退休) / Akaun Sejahtera (安康) /
+-- Akaun Fleksibel (灵活) 三户口，每笔供款按比例分进三个户口。percent 默认 75/15/10 是我所知的
+-- 官方默认值，不是 100% 保证跟实际账户一致，每一笔都可以各自调整 (跟 salary_payments 的
+-- EPF% 快照一样是"存当时用的比例"，不是全局设置，改了默认值不会追溯改到已存的历史记录)。
+-- amount 字段是 percent × 当笔总供款 算出来的金额，自动生成路径 (sync_salary_payment()) 用
+-- 默认比例，手动新增/编辑时前端会自动算但可以手动覆盖。
 CREATE TABLE epf_contributions (
   id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                  UUID NOT NULL REFERENCES auth.users(id) DEFAULT auth.uid(),
@@ -243,6 +281,12 @@ CREATE TABLE epf_contributions (
   employee_contribution    NUMERIC(12,2) NOT NULL DEFAULT 0,
   employer_contribution    NUMERIC(12,2) NOT NULL DEFAULT 0,
   additional_contribution  NUMERIC(12,2) NOT NULL DEFAULT 0,
+  persaraan_percent        NUMERIC(5,2) NOT NULL DEFAULT 75,
+  sejahtera_percent        NUMERIC(5,2) NOT NULL DEFAULT 15,
+  fleksibel_percent        NUMERIC(5,2) NOT NULL DEFAULT 10,
+  persaraan_amount         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  sejahtera_amount         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  fleksibel_amount         NUMERIC(12,2) NOT NULL DEFAULT 0,
   notes                    VARCHAR(255),
   created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -259,6 +303,11 @@ CREATE TABLE epf_contributions (
 -- v4 补充: status 字段加入后，联动逻辑要先判断 status = 'paid' 才生成/保留 transaction 和
 -- epf_contributions；status 变成 draft/pending/cancelled 时要把已生成的那两条记录撤掉
 -- (删除 transaction + 清空 transaction_id + 删除 epf_contributions)，而不是留着孤儿记录。
+-- v4.9 补充: 自动生成 epf_contributions 那笔时，同时要按默认比例 (75/15/10) 算好
+-- persaraan_amount/sejahtera_amount/fleksibel_amount 三个字段存进去，不能只存 employee/employer
+-- 供款金额就当完工——仪表盘的 EPF 户口占比饼图靠这三个字段加总，漏了这段本地版本踩过一次
+-- bug (mysqli bind_param 参数个数手动数错，导致这段 INSERT 直接被跳过，教训: 参数多的时候
+-- 用工具数字符串长度，不要用肉眼数)。
 
 CREATE TABLE budgets (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -270,13 +319,21 @@ CREATE TABLE budgets (
   UNIQUE (category_id, month)
 );
 
+-- v4.9.2/v4.9.3 备注 (同上面 salary_payments 那条，迁移到 Supabase 时不要漏掉): 这台机器的
+-- api.php 里有一个 auto_generate_due_subscriptions() 函数，每次看仪表盘/订阅列表都会跑一次——
+-- 对每个"使用中"的订阅，只要 next_billing_date (没有就用 start_date) 已经到期，就自动生成一笔
+-- expense 交易，并循环往后推进直到追上今天为止 (一次能补齐好几期没打开网站累积的欠账，上限 120 期)。
+-- 纯应用层逻辑，不是数据库触发器/约束 —— 只建表不迁移这段逻辑的话，订阅到期不会自动产生支出记录，
+-- 只能靠手动记账。
 CREATE TABLE subscriptions (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id           UUID NOT NULL REFERENCES auth.users(id) DEFAULT auth.uid(),
   name              VARCHAR(100) NOT NULL,
   cost              NUMERIC(10,2) NOT NULL,
+  bank_account_id   UUID REFERENCES bank_accounts(id) ON DELETE SET NULL, -- v4.9.2: 自动扣款账户
+  start_date        DATE, -- v4.9.3: 购买/开始日期，自动生成扣费记录的起算点
   billing_cycle     TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_cycle IN ('monthly','yearly')),
-  next_billing_date DATE,
+  next_billing_date DATE, -- v4.9.3: 系统自动往前推算的下次扣费日 (见 auto_generate_due_subscriptions() 的移植提醒)
   remind_days_before INT NOT NULL DEFAULT 3, -- v2: 提前几天提醒续费
   category          VARCHAR(50),
   is_active         BOOLEAN NOT NULL DEFAULT true,
@@ -503,15 +560,20 @@ CREATE TABLE learning_logs (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- v4.9.4 备注 (跟 salary_payments/subscriptions 那两条一样，迁移到 Supabase 时不要漏掉): 这台机器的
+-- api.php 里有一个 generate_report()/build_report_content() 路径 (top-level action generate_report)，
+-- 每次生成报表时按 user_id+report_type+period_start+period_end 判断"这个区间是不是已经生成过"，
+-- 有就 UPDATE 覆盖、没有就 INSERT，content 字段是服务器算好的汇总 JSON 快照，不是用户手填的 ——
+-- 纯应用层逻辑，不是数据库触发器，只建表不迁移这段逻辑的话，报表页面点"生成"不会真的填出内容。
 CREATE TABLE reports (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id      UUID NOT NULL REFERENCES auth.users(id) DEFAULT auth.uid(),
-  report_type  TEXT NOT NULL CHECK (report_type IN ('weekly','monthly')),
+  report_type  TEXT NOT NULL CHECK (report_type IN ('weekly','monthly','yearly')),
   period_start DATE NOT NULL,
   period_end   DATE NOT NULL,
   content      JSONB NOT NULL,
   generated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (user_id, report_type, period_start)
+  UNIQUE (user_id, report_type, period_start, period_end)
 );
 
 CREATE TABLE ai_conversations (
@@ -551,9 +613,15 @@ CREATE TABLE webhook_logs (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- v4.9.7 备注: 本地 MySQL 版新增了 role ('admin'/'user') 做管理员功能 (CRUD 其他用户 + 全库备份)，
+-- 这里的 profiles 也加上对应字段做对齐 —— 但本地版是自建 users 表+密码判断，这里是 Supabase Auth
+-- (auth.users)，管理员相关的几个 action (admin_list_users/admin_create_user/admin_update_user/
+-- admin_delete_user/admin_export_full_sql) 迁移时要重新实现成 Postgres function 或用
+-- service_role key 绕过 RLS 才能跨用户操作，不能直接照搬本地 PHP 的写法。
 CREATE TABLE profiles (
   id           UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   display_name VARCHAR(100),
+  role         TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin','user')),
   timezone     VARCHAR(50) DEFAULT 'Asia/Kuala_Lumpur',
   locale       VARCHAR(10) DEFAULT 'zh-CN',
   avatar_text  VARCHAR(10),
@@ -631,6 +699,12 @@ CREATE TABLE recurrence_rules (
 -- Row Level Security: 对每张业务表开启 RLS 并加 policy
 -- =====================================================================
 
+-- profiles 不在下面这个通用循环里: 它的主键 id 本身就是 auth.users.id，没有独立的 user_id 列，
+-- 用循环里那句通用 policy 模板 (USING (auth.uid() = user_id)) 会直接报错 "column user_id does not
+-- exist" 而中断整个脚本 —— 这是之前这份文件真正跑不起来的原因，profiles 单独处理，其余表照旧。
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "own profile only" ON profiles FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+
 DO $$
 DECLARE
   t TEXT;
@@ -639,13 +713,13 @@ BEGIN
     SELECT unnest(ARRAY[
       'project_categories','projects','tasks','habits','habit_logs','journal_entries','inbox_items',
       'bank_accounts','banks','tags','salary_profiles','salary_payments','epf_contributions',
-      'categories','transactions','budgets','subscriptions','daily_metrics',
+      'categories','transactions','budgets','subscriptions','daily_metrics','fixed_deposits',
       'exercises','workouts','workout_sets','media_entries','reading_logs',
       'bookmarks','goals','key_results','time_blocks',
       'contacts','interactions','pantry_items','recipes','shopping_list',
       'trips','trip_items','skills','learning_logs','reports',
       'ai_conversations','ai_messages','automations','webhook_logs',
-      'profiles','settings','reminders','templates','recurrence_rules'
+      'settings','reminders','templates','recurrence_rules'
     ])
   LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', t);
@@ -654,10 +728,6 @@ BEGIN
       t
     );
   END LOOP;
-
-  -- profiles 表主键就是 user_id (=id)，policy 条件不同
-  EXECUTE 'DROP POLICY "own rows only" ON profiles;';
-  EXECUTE 'CREATE POLICY "own profile only" ON profiles FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);';
 END $$;
 
 -- =====================================================================

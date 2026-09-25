@@ -10,7 +10,10 @@ const BOTTOM_NAV_ROUTES = ['dashboard', 'tasks', 'habits', 'transactions'];
 // "设置"原本是个多卡片的导航中转页 (标签管理/银行账户/提醒设置/备份与恢复)，用户说前三个都已经
 // 各自在侧边栏能直接点到了，只留"备份与恢复"这一个真正有用的，所以这里直接跳过中转页。
 const STATIC_NAV_LINKS = {
-  system: [{ route: 'backup', icon: '💾', label: '备份与恢复' }],
+  system: [
+    { route: 'backup', icon: '💾', label: '备份与恢复' },
+    { route: 'admin-users', icon: '🛡️', label: '用户管理', adminOnly: true },
+  ],
 };
 
 // v2/v3 规范: 只保留这份文档定义的核心模块，其余(库存/旅行/AI助理等)先从导航隐藏，
@@ -20,7 +23,7 @@ const CORE_VISIBLE = new Set([
   'categories', 'transactions', 'subscriptions', 'journal_entries', 'contacts',
   'bank_accounts', 'banks', 'tags', 'bookmarks',
   'salary_profiles', 'salary_payments', 'epf_contributions',
-  'reminders',
+  'reminders', 'reports', 'fixed_deposits',
 ]);
 
 const PRIORITY_COLOR = { urgent: '#ef4444', high: '#ef4444', medium: '#f59e0b', low: '#22c55e' };
@@ -117,8 +120,9 @@ function buildSidebar() {
 
   let html = `<a class="nav-item" data-route="dashboard" href="#dashboard"><span class="nav-icon">🏠</span><span class="nav-label"> 今日仪表盘</span></a>`;
 
+  const isAdmin = CURRENT_USER?.role === 'admin';
   for (const g of GROUP_ORDER) {
-    const staticLinks = STATIC_NAV_LINKS[g] || [];
+    const staticLinks = (STATIC_NAV_LINKS[g] || []).filter(l => !l.adminOnly || isAdmin);
     if (!groups[g].length && !staticLinks.length) continue;
     html += `<div class="nav-group-title">${GROUP_LABELS[g] || g}</div>`;
     for (const link of staticLinks) {
@@ -253,6 +257,8 @@ function router() {
   setActiveNav(route);
   if (route === 'dashboard') renderDashboard();
   else if (route === 'backup') renderBackupPage();
+  else if (route === 'reports') renderReportsPage();
+  else if (route === 'admin-users') renderAdminUsersPage();
   else if (RESOURCES[route]) renderResourcePage(route);
   else document.getElementById('page-content').innerHTML = '<p class="empty">未知页面</p>';
 }
@@ -274,8 +280,166 @@ function renderBackupPage() {
       <h3>各模块 CSV 导出</h3>
       <p class="stat-sub">在「财务记账」等列表页顶部工具栏也有单独的「⬇ 导出 CSV」按钮，只导出该模块当前筛选条件下的数据。</p>
     </div>
+    ${CURRENT_USER?.role === 'admin' ? `
+    <div class="card" style="max-width:560px; margin-top:16px;">
+      <h3>🛡️ 全库备份 (管理员)</h3>
+      <p class="stat-sub">导出整个数据库，包含<strong style="color:var(--danger);">所有账号</strong>的所有数据、外加完整的建表结构，拿去一台全新的 MySQL 直接跑就能整个还原。请妥善保管这份文件，里面有别人的隐私数据。</p>
+      <button class="btn danger" id="btn-export-full-sql" style="margin-top:12px;">🛡️ 导出全库备份 (SQL)</button>
+    </div>` : ''}
   `;
   document.getElementById('btn-export-sql').addEventListener('click', exportFullBackup);
+  if (CURRENT_USER?.role === 'admin') {
+    document.getElementById('btn-export-full-sql').addEventListener('click', exportFullDbBackup);
+  }
+}
+
+async function exportFullDbBackup() {
+  const btn = document.getElementById('btn-export-full-sql');
+  btn.disabled = true;
+  btn.textContent = '导出中...';
+  try {
+    const res = await api({ action: 'admin_export_full_sql' });
+    const blob = new Blob(['﻿' + res.sql], { type: 'application/sql;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = res.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('导出失败：' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🛡️ 导出全库备份 (SQL)';
+  }
+}
+
+// ---------------- 用户管理 (仅 admin) ----------------
+
+const ROLE_LABEL = { admin: '管理员', user: '普通用户' };
+
+async function renderAdminUsersPage() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="toolbar">
+      <div class="page-title" style="margin-bottom:0;">🛡️ 用户管理</div>
+      <button class="btn" id="btn-add-user">+ 新增用户</button>
+    </div>
+    <div class="resource-note">💡 只有管理员能看到这个页面。新增/编辑账号，或把某人升级/降级成管理员。系统至少要留一个管理员，不能把最后一个降级或删除。</div>
+    <div id="admin-users-list">${skeletonLines(4)}</div>
+  `;
+  document.getElementById('btn-add-user').addEventListener('click', () => openAdminUserForm(null));
+  await loadAndRenderAdminUsers();
+}
+
+let ADMIN_USERS_CACHE = [];
+
+async function loadAndRenderAdminUsers() {
+  const listEl = document.getElementById('admin-users-list');
+  let users;
+  try {
+    const res = await api({ action: 'admin_list_users' });
+    users = res.data;
+    ADMIN_USERS_CACHE = users;
+  } catch (e) {
+    listEl.innerHTML = `<p class="empty">加载失败：${escapeHtml(e.message)}</p>`;
+    return;
+  }
+  listEl.innerHTML = `
+    <div class="card">
+      <table>
+        <thead><tr><th>用户名</th><th>显示名称</th><th>角色</th><th>创建时间</th><th></th></tr></thead>
+        <tbody>
+          ${users.map(u => `
+            <tr>
+              <td>${escapeHtml(u.username)}${u.id === CURRENT_USER.id ? ' <span class="stat-sub">(我)</span>' : ''}</td>
+              <td>${escapeHtml(u.display_name || '')}</td>
+              <td><span class="badge" style="background:${u.role === 'admin' ? 'rgba(0,240,255,0.15);color:var(--accent)' : 'rgba(255,255,255,0.08);color:var(--muted)'};">${ROLE_LABEL[u.role] || u.role}</span></td>
+              <td class="stat-sub">${u.created_at}</td>
+              <td style="text-align:right; white-space:nowrap;">
+                <button class="btn small secondary" onclick='openAdminUserFormById(${u.id})'>编辑</button>
+                <button class="btn small danger" onclick='deleteAdminUser(${u.id})' ${u.id === CURRENT_USER.id ? 'disabled title="不能删除自己"' : ''}>删除</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openAdminUserFormById(id) {
+  openAdminUserForm(ADMIN_USERS_CACHE.find(u => u.id === id) || null);
+}
+
+function openAdminUserForm(user) {
+  const isEdit = !!user;
+  const modalRoot = document.getElementById('modal-root');
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeForm()">
+      <div class="modal">
+        <h3>${isEdit ? '编辑用户' : '新增用户'}</h3>
+        <div class="field"><label>用户名</label><input type="text" id="admin-user-username" value="${isEdit ? escapeHtml(user.username) : ''}"></div>
+        <div class="field"><label>显示名称 (选填)</label><input type="text" id="admin-user-display-name" value="${isEdit ? escapeHtml(user.display_name || '') : ''}"></div>
+        <div class="field">
+          <label>角色</label>
+          <select id="admin-user-role">
+            <option value="user" ${isEdit && user.role === 'user' ? 'selected' : ''}>普通用户</option>
+            <option value="admin" ${isEdit && user.role === 'admin' ? 'selected' : ''}>管理员</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>${isEdit ? '重设密码 (选填，留空表示不改)' : '密码 (至少 6 位)'}</label>
+          <input type="password" id="admin-user-password" autocomplete="new-password">
+        </div>
+        <div id="admin-user-form-error" class="login-error"></div>
+        <div class="modal-actions">
+          <button class="btn secondary" onclick="closeForm()" type="button">取消</button>
+          <button class="btn" onclick="submitAdminUserForm(${isEdit ? user.id : 'null'})" type="button">保存</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function submitAdminUserForm(id) {
+  const username = document.getElementById('admin-user-username').value.trim();
+  const displayName = document.getElementById('admin-user-display-name').value.trim();
+  const role = document.getElementById('admin-user-role').value;
+  const password = document.getElementById('admin-user-password').value;
+  const errEl = document.getElementById('admin-user-form-error');
+  errEl.textContent = '';
+
+  if (!id && password.length < 6) { errEl.textContent = '密码至少要 6 位'; return; }
+
+  try {
+    if (id) {
+      const data = { id, username, display_name: displayName, role };
+      if (password) data.password = password;
+      await api({ action: 'admin_update_user', ...data });
+    } else {
+      await api({ action: 'admin_create_user', username, display_name: displayName, role, password });
+    }
+    closeForm();
+    await loadAndRenderAdminUsers();
+  } catch (e) {
+    errEl.textContent = e.message;
+  }
+}
+
+async function deleteAdminUser(id) {
+  const user = ADMIN_USERS_CACHE.find(u => u.id === id);
+  const username = user ? user.username : `#${id}`;
+  if (!confirm(`确定要删除用户「${username}」吗？\n\n这会永久删除这个账号名下所有模块的所有数据 (任务/交易/日记...全部)，不是只删账号本身，不能恢复。`)) return;
+  try {
+    await api({ action: 'admin_delete_user', id });
+  } catch (e) {
+    alert(e.message);
+    return;
+  }
+  await loadAndRenderAdminUsers();
 }
 
 function backupStatusHtml(lastBackup) {
@@ -309,6 +473,237 @@ async function exportFullBackup() {
     btn.disabled = false;
     btn.textContent = '📦 导出完整数据库 SQL';
   }
+}
+
+// ---------------- 报表汇总 ----------------
+
+const REPORT_TYPE_LABEL = { weekly: '周报', monthly: '月报', yearly: '年报' };
+const REPORT_QUICK_OPTIONS = {
+  weekly: [{ value: 'this_week', label: '本周' }, { value: 'last_week', label: '上周' }],
+  monthly: [{ value: 'this_month', label: '本月' }, { value: 'last_month', label: '上月' }],
+  yearly: [{ value: 'this_year', label: '今年' }, { value: 'last_year', label: '去年' }],
+};
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function toYMD(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+
+// 根据"类型 + 快捷选项"算出对应的开始/结束日期，填进两个日期输入框 (用户还是可以自己改成任意区间)
+function computeQuickPeriod(reportType, quickPick) {
+  const now = new Date();
+  if (reportType === 'weekly') {
+    const day = now.getDay(); // 0=周日 ... 6=周六
+    const diffToMonday = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
+    if (quickPick === 'last_week') monday.setDate(monday.getDate() - 7);
+    const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+    return [toYMD(monday), toYMD(sunday)];
+  }
+  if (reportType === 'yearly') {
+    let year = now.getFullYear();
+    if (quickPick === 'last_year') year -= 1;
+    return [`${year}-01-01`, `${year}-12-31`];
+  }
+  let year = now.getFullYear(), month = now.getMonth(); // monthly (默认)
+  if (quickPick === 'last_month') { month -= 1; if (month < 0) { month = 11; year -= 1; } }
+  const start = new Date(year, month, 1);
+  const end = new Date(year, month + 1, 0);
+  return [toYMD(start), toYMD(end)];
+}
+
+// 把 period_start/period_end 显示成人话 (整月/整年就显示"2026年9月"，不是标准整月整年区间就直接显示日期范围)
+function formatReportPeriodLabel(r) {
+  const start = r.period_start, end = r.period_end;
+  if (r.report_type === 'yearly' && start.slice(5) === '01-01' && end.slice(5) === '12-31' && start.slice(0, 4) === end.slice(0, 4)) {
+    return `${start.slice(0, 4)}年`;
+  }
+  if (r.report_type === 'monthly' && start.slice(0, 7) === end.slice(0, 7) && start.slice(8, 10) === '01') {
+    const d = new Date(start + 'T00:00:00');
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    if (Number(end.slice(8, 10)) === lastDay) return `${start.slice(0, 4)}年${Number(start.slice(5, 7))}月`;
+  }
+  return `${start} ~ ${end}`;
+}
+
+async function renderReportsPage() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="toolbar">
+      <div class="page-title" style="margin-bottom:0;">📑 报表汇总</div>
+    </div>
+    <div class="resource-note">💡 选一个期间生成报表：收支/分类占比/前5大支出/薪资/EPF供款/订阅扣费/期末各账户余额，外加习惯打卡次数和日记篇数。同一个期间可以重新生成覆盖最新数字，不会重复堆一份。</div>
+    <div class="card" style="max-width:640px;">
+      <h3>生成新报表</h3>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <div class="field" style="min-width:140px;">
+          <label>类型</label>
+          <select id="report-type-select">
+            <option value="monthly">月报</option>
+            <option value="weekly">周报</option>
+            <option value="yearly">年报</option>
+          </select>
+        </div>
+        <div class="field" style="min-width:140px;">
+          <label>期间</label>
+          <select id="report-quick-select"></select>
+        </div>
+      </div>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <div class="field" style="min-width:160px;"><label>开始日期</label><input type="date" id="report-period-start"></div>
+        <div class="field" style="min-width:160px;"><label>结束日期</label><input type="date" id="report-period-end"></div>
+      </div>
+      <button class="btn" id="btn-generate-report">📑 生成报表</button>
+    </div>
+    <div id="reports-list" style="margin-top:20px;">${skeletonLines(3)}</div>
+  `;
+
+  function refreshQuickOptions() {
+    const type = document.getElementById('report-type-select').value;
+    const sel = document.getElementById('report-quick-select');
+    const opts = REPORT_QUICK_OPTIONS[type];
+    sel.innerHTML = opts.map(o => `<option value="${o.value}">${escapeHtml(o.label)}</option>`).join('') + '<option value="custom">自订日期</option>';
+    applyQuickPick();
+  }
+  function applyQuickPick() {
+    const type = document.getElementById('report-type-select').value;
+    const pick = document.getElementById('report-quick-select').value;
+    if (pick === 'custom') return;
+    const [start, end] = computeQuickPeriod(type, pick);
+    document.getElementById('report-period-start').value = start;
+    document.getElementById('report-period-end').value = end;
+  }
+  document.getElementById('report-type-select').addEventListener('change', refreshQuickOptions);
+  document.getElementById('report-quick-select').addEventListener('change', applyQuickPick);
+  refreshQuickOptions();
+
+  document.getElementById('btn-generate-report').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-generate-report');
+    const reportType = document.getElementById('report-type-select').value;
+    const periodStart = document.getElementById('report-period-start').value;
+    const periodEnd = document.getElementById('report-period-end').value;
+    if (!periodStart || !periodEnd || periodStart > periodEnd) { alert('请选择正确的开始/结束日期'); return; }
+    btn.disabled = true;
+    btn.textContent = '生成中...';
+    try {
+      await api({ action: 'generate_report', report_type: reportType, period_start: periodStart, period_end: periodEnd });
+      await loadAndRenderReportsList();
+    } catch (e) {
+      alert('生成失败：' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '📑 生成报表';
+    }
+  });
+
+  await loadAndRenderReportsList();
+}
+
+async function loadAndRenderReportsList() {
+  const listEl = document.getElementById('reports-list');
+  const { data } = await api({ resource: 'reports', action: 'list' });
+  const reports = [...data].sort((a, b) => b.period_start.localeCompare(a.period_start));
+  if (!reports.length) {
+    listEl.innerHTML = '<p class="empty">还没有生成过报表，选好期间点上面的"生成报表"试试</p>';
+    return;
+  }
+  listEl.innerHTML = reports.map(r => reportCardHtml(r)).join('');
+}
+
+function reportCardHtml(r) {
+  const content = (() => { try { return JSON.parse(r.content); } catch (e) { return {}; } })();
+  const periodLabel = formatReportPeriodLabel(r);
+  const net = Number(content.net || 0);
+  const netColor = net >= 0 ? '#00FF87' : '#FF3366';
+  return `
+    <div class="card" style="max-width:900px; margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div>
+          <strong style="font-size:16px;color:var(--navy);">${escapeHtml(periodLabel)}</strong>
+          <span class="badge" style="background:#DBEAFE;color:#2563EB;margin-left:8px;">${REPORT_TYPE_LABEL[r.report_type] || r.report_type}</span>
+        </div>
+        <span>
+          <button class="btn small secondary" onclick='toggleReportDetail(${r.id})'>查看详情</button>
+          <button class="btn small danger" onclick='deleteReport(${r.id})'>删除</button>
+        </span>
+      </div>
+      <div style="display:flex; gap:28px; margin-top:12px; flex-wrap:wrap;">
+        <div><div class="stat-sub">收入</div><strong>RM ${Number(content.income_total || 0).toFixed(2)}</strong></div>
+        <div><div class="stat-sub">支出</div><strong>RM ${Number(content.expense_total || 0).toFixed(2)}</strong></div>
+        <div><div class="stat-sub">结余</div><strong style="color:${netColor};">RM ${net.toFixed(2)}</strong></div>
+      </div>
+      <div id="report-detail-${r.id}" style="display:none; margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+        ${reportDetailHtml(content)}
+      </div>
+    </div>
+  `;
+}
+
+function reportDetailHtml(c) {
+  const topExpensesHtml = (c.top_expenses || []).length
+    ? c.top_expenses.map(t => `
+        <div class="list-row">
+          <div class="list-row-icon">🧾</div>
+          <div class="list-row-body">
+            <div class="list-row-title">${escapeHtml(t.description)}</div>
+            <div class="list-row-sub">${escapeHtml(t.category_label)} · ${t.date}</div>
+          </div>
+          <div class="list-row-right"><div class="list-row-amount expense">- RM ${Number(t.amount).toFixed(2)}</div></div>
+        </div>`).join('')
+    : '<p class="empty">这段期间没有支出记录</p>';
+
+  const habitsHtml = (c.habit_checkins || []).length
+    ? c.habit_checkins.map(h => `<div class="donut-legend-item"><span class="donut-legend-left">${escapeHtml(h.name)}</span><span>${h.cnt} 次</span></div>`).join('')
+    : '<p class="empty">这段期间没有习惯打卡记录</p>';
+
+  const accountsHtml = (c.account_balances || []).length
+    ? c.account_balances.map(a => `<div class="donut-legend-item"><span class="donut-legend-left">${escapeHtml(a.nickname)}</span><span>RM ${Number(a.balance).toFixed(2)}</span></div>`).join('')
+    : '<p class="empty">还没有银行账户/现金记录</p>';
+
+  const epf = c.epf_contributed || {};
+  const subs = c.subscriptions_charged || {};
+
+  return `
+    <div class="grid-3">
+      <div>
+        <h4>支出分类占比</h4>
+        ${buildDonutHtml(c.category_breakdown || [], '期间支出', '这段期间没有支出记录')}
+      </div>
+      <div>
+        <h4>薪资 / EPF / 订阅 / 日记</h4>
+        <p>💼 薪资收入：RM ${Number(c.salary_received || 0).toFixed(2)}</p>
+        <p>🏦 EPF 供款：员工 RM ${Number(epf.employee || 0).toFixed(2)} · 雇主 RM ${Number(epf.employer || 0).toFixed(2)} · 自愿 RM ${Number(epf.additional || 0).toFixed(2)}</p>
+        <p>🔄 订阅扣费：${subs.count || 0} 笔，共 RM ${Number(subs.total || 0).toFixed(2)}</p>
+        <p>📓 日记：${c.journal_entry_count || 0} 篇</p>
+      </div>
+      <div>
+        <h4>期末账户余额 (合计 RM ${Number(c.total_balance_at_period_end || 0).toFixed(2)})</h4>
+        ${accountsHtml}
+      </div>
+    </div>
+    <div style="margin-top:20px;">
+      <h4>前 5 大支出</h4>
+      ${topExpensesHtml}
+    </div>
+    <div style="margin-top:20px;">
+      <h4>习惯打卡次数</h4>
+      ${habitsHtml}
+    </div>
+  `;
+}
+
+function toggleReportDetail(id) {
+  const detailEl = document.getElementById(`report-detail-${id}`);
+  if (detailEl) detailEl.style.display = detailEl.style.display === 'none' ? 'block' : 'none';
+}
+
+async function deleteReport(id) {
+  if (!confirm('确定要删除这份报表吗？(只删除这份汇总快照，不会动到原始的交易/薪资等记录)')) return;
+  try {
+    await api({ resource: 'reports', action: 'delete', id });
+  } catch (e) {
+    alert(e.message);
+    return;
+  }
+  await loadAndRenderReportsList();
 }
 
 // ---------------- Dashboard ----------------
@@ -405,6 +800,20 @@ function buildAssetDonutHtml(accounts) {
   return buildDonutHtml(breakdown, '总资产', '还没有正余额的账户');
 }
 
+// EPF 2024 新制度三户口占比饼图: Akaun Persaraan (退休) / Akaun Sejahtera (安康) / Akaun Fleksibel (灵活)。
+// 数字来自每笔 epf_contributions 自己存的 persaraan_amount/sejahtera_amount/fleksibel_amount 加总
+// (每笔可以各自设置比例，见 config_resources.php 的说明) —— 这里只是把累计数字画成饼图。
+const EPF_ACCOUNT_COLOR = { persaraan: '#3B82F6', sejahtera: '#16A34A', fleksibel: '#F59E0B' };
+function buildEpfAccountDonutHtml(epfCumulative) {
+  const c = epfCumulative || {};
+  const breakdown = [
+    { label: 'Akaun Persaraan', color: EPF_ACCOUNT_COLOR.persaraan, amount: Number(c.persaraan || 0) },
+    { label: 'Akaun Sejahtera', color: EPF_ACCOUNT_COLOR.sejahtera, amount: Number(c.sejahtera || 0) },
+    { label: 'Akaun Fleksibel', color: EPF_ACCOUNT_COLOR.fleksibel, amount: Number(c.fleksibel || 0) },
+  ];
+  return buildDonutHtml(breakdown, 'EPF 总额', '还没有 EPF 供款记录');
+}
+
 async function renderDashboard() {
   const el = document.getElementById('page-content');
   el.innerHTML = dashboardSkeleton();
@@ -475,6 +884,24 @@ async function renderDashboard() {
   const autoSalaryNote = (d.auto_generated_salary || []).length
     ? `<div class="resource-note">✅ 已自动生成 ${d.auto_generated_salary.map(g => `「${escapeHtml(g.company_name)}」${g.period_label} 发薪 RM ${Number(g.net_salary).toFixed(2)}`).join('、')}，如有花红/津贴可以去"发薪记录"编辑补上。</div>`
     : '';
+  const skippedSalaryNote = (d.auto_generate_skipped_salary || []).length
+    ? `<div class="resource-note warning">⚠ 「${d.auto_generate_skipped_salary.map(s => `${escapeHtml(s.company_name)}」发薪日已经到了，但${escapeHtml(s.reason)}，没办法自动生成发薪记录`).join('；「')}——去"薪资档案"把这个补上，下次打开就会自动生成了。</div>`
+    : '';
+  const autoSubNote = (d.auto_generated_subscriptions || []).length
+    ? `<div class="resource-note">✅ 已自动生成 ${d.auto_generated_subscriptions.map(g => `「${escapeHtml(g.name)}」${g.date} 扣费 RM ${Number(g.amount).toFixed(2)}`).join('、')}。</div>`
+    : '';
+  const skippedSubNote = (d.auto_generate_skipped_subscriptions || []).length
+    ? `<div class="resource-note warning">⚠ 「${d.auto_generate_skipped_subscriptions.map(s => `${escapeHtml(s.name)}」已经到期，但${escapeHtml(s.reason)}，没办法自动生成扣费记录`).join('；「')}——去"订阅管理"把这个补上，下次打开就会自动生成了。</div>`
+    : '';
+  const maturedFdNote = (d.auto_matured_fixed_deposits || []).length
+    ? `<div class="resource-note">✅ ${d.auto_matured_fixed_deposits.map(m => m.action === 'renew'
+        ? `一笔定存到期，本金 RM ${Number(m.principal).toFixed(2)} + 利息 RM ${Number(m.interest).toFixed(2)} 已自动展期`
+        : `一笔定存到期，本金 RM ${Number(m.principal).toFixed(2)} + 利息 RM ${Number(m.interest).toFixed(2)} = RM ${Number(m.total).toFixed(2)} 已自动存入指定账户`
+      ).join('；')}。</div>`
+    : '';
+  const skippedFdNote = (d.auto_generate_skipped_fixed_deposits || []).length
+    ? `<div class="resource-note warning">⚠ 有 ${d.auto_generate_skipped_fixed_deposits.length} 笔定存已经到期，但没有设置"到期转入账户"，没办法自动处理——去"定期存款"把这个补上，下次打开就会自动处理了。</div>`
+    : '';
 
   el.innerHTML = `
     <div class="dash-header">
@@ -485,6 +912,11 @@ async function renderDashboard() {
       <div class="dash-date">${d.date}</div>
     </div>
     ${autoSalaryNote}
+    ${skippedSalaryNote}
+    ${autoSubNote}
+    ${skippedSubNote}
+    ${maturedFdNote}
+    ${skippedFdNote}
 
     <div class="stat-grid">
       <div class="stat-card">
@@ -492,13 +924,13 @@ async function renderDashboard() {
         <div class="stat-info">
           <div class="stat-label-row"><span class="stat-label">总余额</span><span class="stat-dot" style="background:#7C3AED;"></span></div>
           <div class="stat-value">RM ${Number(d.total_balance || 0).toFixed(2)}</div>
-          <div class="stat-foot">${(d.bank_accounts || []).length} 个账户</div>
+          <div class="stat-foot">${(d.bank_accounts || []).length} 个账户${(d.fixed_deposits_count || 0) > 0 ? ` · 另有定存 RM ${Number(d.fixed_deposits_total).toFixed(2)} (${d.fixed_deposits_count}笔)` : ''}</div>
         </div>
       </div>
       <div class="stat-card">
         <div class="stat-icon bg-red">🛍️</div>
         <div class="stat-info">
-          <div class="stat-label-row"><span class="stat-label">今日支出</span><span class="stat-dot" style="background:#EF4444;"></span></div>
+          <div class="stat-label-row"><span class="stat-label">今日支出</span><span class="stat-dot" style="background:#FF3366;"></span></div>
           <div class="stat-value">RM ${d.expense_today.toFixed(2)}</div>
           <div class="stat-foot">${d.date}</div>
         </div>
@@ -506,7 +938,7 @@ async function renderDashboard() {
       <div class="stat-card">
         <div class="stat-icon bg-green">📈</div>
         <div class="stat-info">
-          <div class="stat-label-row"><span class="stat-label">今日收入</span><span class="stat-dot" style="background:#16A34A;"></span></div>
+          <div class="stat-label-row"><span class="stat-label">今日收入</span><span class="stat-dot" style="background:#00FF87;"></span></div>
           <div class="stat-value">RM ${d.income_today.toFixed(2)}</div>
           <div class="stat-foot">${d.date}</div>
         </div>
@@ -514,7 +946,7 @@ async function renderDashboard() {
       <div class="stat-card">
         <div class="stat-icon bg-blue">📊</div>
         <div class="stat-info">
-          <div class="stat-label-row"><span class="stat-label">本月结余</span><span class="stat-dot" style="background:${monthNet >= 0 ? '#16A34A' : '#EF4444'};"></span></div>
+          <div class="stat-label-row"><span class="stat-label">本月结余</span><span class="stat-dot" style="background:${monthNet >= 0 ? '#00FF87' : '#FF3366'};"></span></div>
           <div class="stat-value">RM ${monthNet.toFixed(2)}</div>
           <div class="stat-foot">收入 RM ${Number(d.month_income || 0).toFixed(0)} · 支出 RM ${Number(d.month_expense || 0).toFixed(0)}</div>
         </div>
@@ -532,7 +964,7 @@ async function renderDashboard() {
       </div>
     </div>
 
-    <div class="dash-row-2">
+    <div class="grid-3">
       <div class="card">
         <h3>💼 本月薪资</h3>
         <div class="stat-number">RM ${Number(d.actual_monthly_salary || 0).toFixed(2)}</div>
@@ -549,6 +981,10 @@ async function renderDashboard() {
           员工 RM ${Number(d.epf_cumulative?.employee || 0).toFixed(2)} ·
           雇主 RM ${Number(d.epf_cumulative?.employer || 0).toFixed(2)}
         </div>
+      </div>
+      <div class="card">
+        <h3>🥧 EPF 户口占比 <span class="card-period-badge">Akaun 三户口</span></h3>
+        ${buildEpfAccountDonutHtml(d.epf_cumulative)}
       </div>
     </div>
 
@@ -877,16 +1313,16 @@ function renderCategoryBreakdown(data, cfg) {
   return `<div class="card"><h3>📊 支出分类占比</h3>${bars}</div>`;
 }
 
-const CARD_GRID_RESOURCES = new Set(['subscriptions', 'bookmarks', 'contacts']);
+const CARD_GRID_RESOURCES = new Set(['subscriptions', 'bookmarks', 'contacts', 'fixed_deposits']);
 
 function renderItemGrid(resourceName, data) {
   if (!data.length) return '<div class="card"><p class="empty">还没有数据</p></div>';
 
   if (resourceName === 'subscriptions') {
-    const statusColor = { Active: '#16A34A', active: '#16A34A', Cancelled: '#9CA3AF', cancelled: '#9CA3AF', Paused: '#EA580C', paused: '#EA580C' };
+    const statusColor = { Active: '#00FF87', active: '#00FF87', Cancelled: '#9CA3AF', cancelled: '#9CA3AF', Paused: '#EA580C', paused: '#EA580C' };
     const cards = data.map(s => {
       const active = s.is_active == 1;
-      const color = active ? '#16A34A' : '#9CA3AF';
+      const color = active ? '#00FF87' : '#9CA3AF';
       return `
         <div class="item-card">
           <div class="item-card-header">
@@ -898,13 +1334,55 @@ function renderItemGrid(resourceName, data) {
           </div>
           <div class="item-card-body">
             <strong style="font-size:16px;color:var(--navy);">RM ${Number(s.cost).toFixed(2)}</strong> / ${s.billing_cycle === 'monthly' ? '月' : '年'}<br>
-            下次扣费：${s.next_billing_date || '-'}
+            下次扣费：${s.next_billing_date || '-'}<br>
+            扣款账户：${s.bank_account_id ? escapeHtml(fkLabel('bank_accounts', s.bank_account_id)) : '<span style="color:var(--danger);">未设置</span>'}
           </div>
           <div class="item-card-footer">
             <span class="badge" style="background:${color}22;color:${color};">${active ? '使用中' : '已停用'}</span>
             <span>
+              <button class="btn small" onclick='markSubscriptionPaid(${s.id})'>✅ 标记已扣费</button>
               <button class="btn small secondary" onclick='openForm("subscriptions", ${s.id})'>编辑</button>
               <button class="btn small danger" onclick='deleteRow("subscriptions", ${s.id})'>删除</button>
+            </span>
+          </div>
+        </div>`;
+    }).join('');
+    return `<div class="item-grid">${cards}</div>`;
+  }
+
+  if (resourceName === 'fixed_deposits') {
+    const statusColor = { active: '#00FF87', matured: '#7FDBFF', withdrawn: '#9CA3AF' };
+    const statusLabel = { active: '存款中', matured: '已到期处理', withdrawn: '提前解约' };
+    const cards = data.map(fd => {
+      const rate = Number(fd.interest_rate);
+      const months = Number(fd.tenure_months);
+      const principal = Number(fd.principal);
+      const interest = Math.round(principal * rate / 100 * months / 12 * 100) / 100;
+      const maturityAmount = principal + interest;
+      const color = statusColor[fd.status] || '#9CA3AF';
+      const bankLabel = fd.bank_id ? fkLabel('banks', fd.bank_id) : '未指定银行';
+      const actionLabel = fd.maturity_action === 'renew'
+        ? '🔁 自动展期 (钱滚钱)'
+        : `➡️ 转入 ${fd.destination_account_id ? escapeHtml(fkLabel('bank_accounts', fd.destination_account_id)) : '<span style="color:var(--danger);">未设置账户</span>'}`;
+      return `
+        <div class="item-card">
+          <div class="item-card-header">
+            <div class="item-card-icon" style="background:var(--icon-green-bg);color:var(--icon-green-fg);">🏦</div>
+            <div>
+              <div class="item-card-title">${escapeHtml(bankLabel)}</div>
+              <div class="item-card-sub">年利率 ${rate}% · ${months} 个月</div>
+            </div>
+          </div>
+          <div class="item-card-body">
+            <strong style="font-size:16px;color:var(--navy);">RM ${principal.toFixed(2)}</strong> 本金<br>
+            到期日：${fd.maturity_date || '-'}（预估到期 RM ${maturityAmount.toFixed(2)}，含利息 RM ${interest.toFixed(2)}）<br>
+            到期处理：${actionLabel}
+          </div>
+          <div class="item-card-footer">
+            <span class="badge" style="background:${color}22;color:${color};">${statusLabel[fd.status] || fd.status}</span>
+            <span>
+              <button class="btn small secondary" onclick='openForm("fixed_deposits", ${fd.id})'>编辑</button>
+              <button class="btn small danger" onclick='deleteRow("fixed_deposits", ${fd.id})'>删除</button>
             </span>
           </div>
         </div>`;
@@ -1102,6 +1580,7 @@ const DELETE_CONSEQUENCE = {
   banks: '删除银行前，请确认没有银行账户还挂在这家银行名下（有引用会被后端拒绝）。',
   tags: '删除标签前，请确认没有交易/任务/链接还在用这个标签（有引用会被后端拒绝）。',
   subscriptions: '删除这个订阅会连同它的续费提醒一起消失，且不可恢复。',
+  fixed_deposits: '如果这笔定存有设置"存入账户"，删除会连同新增时自动扣本金那笔交易一起消失。已经到期处理过 (转入账户/自动展期) 产生的交易/新定存记录不会被连带删除，那些是已经真实发生的事实。',
 };
 
 async function deleteRow(resourceName, id) {
@@ -1116,6 +1595,17 @@ async function deleteRow(resourceName, id) {
   }
   invalidateFkCache(resourceName);
   renderResourcePage(resourceName);
+}
+
+async function markSubscriptionPaid(id) {
+  if (!confirm('确定要标记这笔订阅已扣费吗？\n\n会自动生成一笔支出记录，并把下次扣费日期推后一个周期。')) return;
+  try {
+    await api({ action: 'mark_subscription_paid', id });
+  } catch (e) {
+    alert(e.message);
+    return;
+  }
+  renderResourcePage('subscriptions');
 }
 
 // ---------------- Generic add/edit form modal ----------------
@@ -1167,6 +1657,36 @@ async function openForm(resourceName, id, presetData) {
 
   setupConditionalFields();
   if (resourceName === 'salary_payments') setupSalaryPaymentAutofill(id);
+  if (resourceName === 'epf_contributions') setupEpfSplitAutofill(id);
+}
+
+// 填了员工/雇主/自愿供款金额 (或改了三个户口的 %) 之后，自动按比例算出 Akaun Persaraan/Sejahtera/
+// Fleksibel 各自的金额——只在新增时自动算 (编辑已有记录不动，跟薪资那边同一个"历史记录不能被悄悄
+// 重算"的原则一样，用户要改自己手动改金额栏位)。
+function setupEpfSplitAutofill(existingId) {
+  if (existingId) return;
+  const form = document.getElementById('record-form');
+  const empInput = form.querySelector('[data-field="employee_contribution"]');
+  const emprInput = form.querySelector('[data-field="employer_contribution"]');
+  const addInput = form.querySelector('[data-field="additional_contribution"]');
+  const pPctInput = form.querySelector('[data-field="persaraan_percent"]');
+  const sPctInput = form.querySelector('[data-field="sejahtera_percent"]');
+  const fPctInput = form.querySelector('[data-field="fleksibel_percent"]');
+  const pAmtInput = form.querySelector('[data-field="persaraan_amount"]');
+  const sAmtInput = form.querySelector('[data-field="sejahtera_amount"]');
+  const fAmtInput = form.querySelector('[data-field="fleksibel_amount"]');
+  if (!pAmtInput || !sAmtInput || !fAmtInput) return;
+
+  function recompute() {
+    const total = (parseFloat(empInput?.value) || 0) + (parseFloat(emprInput?.value) || 0) + (parseFloat(addInput?.value) || 0);
+    const pPct = parseFloat(pPctInput?.value) || 0;
+    const sPct = parseFloat(sPctInput?.value) || 0;
+    const fPct = parseFloat(fPctInput?.value) || 0;
+    pAmtInput.value = (total * pPct / 100).toFixed(2);
+    sAmtInput.value = (total * sPct / 100).toFixed(2);
+    fAmtInput.value = (total * fPct / 100).toFixed(2);
+  }
+  [empInput, emprInput, addInput, pPctInput, sPctInput, fPctInput].filter(Boolean).forEach(el => el.addEventListener('input', recompute));
 }
 
 function setupSalaryPaymentAutofill(existingId) {
@@ -1451,13 +1971,49 @@ async function rawApi(payload) {
   return res.json();
 }
 
+let LOGIN_MODE = 'login'; // 'login' | 'register'
+
+function setLoginMode(mode) {
+  LOGIN_MODE = mode;
+  const isRegister = mode === 'register';
+  document.getElementById('login-display-name-field').style.display = isRegister ? 'block' : 'none';
+  document.getElementById('login-password-confirm-field').style.display = isRegister ? 'block' : 'none';
+  document.getElementById('login-submit-btn').textContent = isRegister ? '注册' : '登录';
+  document.getElementById('login-mode-toggle').textContent = isRegister ? '已经有账号？点这里登录' : '还没有账号？点这里注册';
+  document.getElementById('login-sub').textContent = isRegister
+    ? '注册一个新账号，跟其他人的数据完全独立'
+    : '多人共用，登录后只看得到自己的东西';
+  document.getElementById('login-error').textContent = '';
+  document.getElementById('login-password').setAttribute('autocomplete', isRegister ? 'new-password' : 'current-password');
+}
+
 function setupLoginForm() {
+  document.getElementById('login-mode-toggle').addEventListener('click', (e) => {
+    e.preventDefault();
+    setLoginMode(LOGIN_MODE === 'login' ? 'register' : 'login');
+  });
+
   document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const username = document.getElementById('login-username').value.trim();
     const password = document.getElementById('login-password').value;
     const errEl = document.getElementById('login-error');
     errEl.textContent = '';
+
+    if (LOGIN_MODE === 'register') {
+      const passwordConfirm = document.getElementById('login-password-confirm').value;
+      const displayName = document.getElementById('login-display-name').value.trim();
+      if (password !== passwordConfirm) { errEl.textContent = '两次输入的密码不一样'; return; }
+      const json = await rawApi({ action: 'register', username, password, display_name: displayName });
+      if (!json.ok) { errEl.textContent = json.error || '注册失败'; return; }
+      CURRENT_USER = json.user;
+      document.getElementById('login-password').value = '';
+      document.getElementById('login-password-confirm').value = '';
+      hideLoginScreen();
+      boot();
+      return;
+    }
+
     const json = await rawApi({ action: 'login', username, password });
     if (!json.ok) { errEl.textContent = json.error || '登录失败'; return; }
     CURRENT_USER = json.user;

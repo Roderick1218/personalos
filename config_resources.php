@@ -158,7 +158,7 @@ $config = [
             'salary_frequency'     => ['type' => 'select', 'label' => '发薪频率', 'default' => 'monthly',
                 'options' => ['monthly' => '每月', 'biweekly' => '每两周', 'weekly' => '每周', 'custom' => '不固定']],
             'salary_payment_day'   => ['type' => 'number', 'label' => '每月发薪日 (1-31，可留空)', 'min' => 1, 'max' => 31],
-            'bank_account_id'      => ['type' => 'fk', 'label' => '入账账户', 'fk_resource' => 'bank_accounts'],
+            'bank_account_id'      => ['type' => 'fk', 'label' => '入账账户 (发薪日自动生成记录一定要有这个才能生成)', 'fk_resource' => 'bank_accounts', 'required' => true],
             'employee_epf_percent' => ['type' => 'decimal', 'label' => '员工 EPF % (默认)', 'default' => 11],
             'employer_epf_percent' => ['type' => 'decimal', 'label' => '雇主 EPF % (默认)', 'default' => 13],
             'start_date'           => ['type' => 'date', 'label' => '生效日期', 'required' => true, 'default_today' => true],
@@ -206,12 +206,19 @@ $config = [
 
     'epf_contributions' => [
         'label' => 'EPF 供款记录', 'group' => 'finance', 'icon' => '🏦', 'display_field' => 'contribution_date',
+        'note' => '这笔供款 (员工+雇主+自愿供款加起来) 会按下面的比例自动分到 Akaun Persaraan / Akaun Sejahtera / Akaun Fleksibel 三个户口 (2024年新制度)。默认比例是 75% / 15% / 10%，这是我所知的官方默认值，不是100%保证跟你实际账户一致——如果 KWSP 官方公布的比例跟这个不一样，或者官方有调整过，直接在下面改就好，每一笔都可以各自设置，不会影响其他笔。',
         'fields' => [
             'salary_payment_id'       => ['type' => 'fk', 'label' => '关联发薪记录 (手动额外供款可留空)', 'fk_resource' => 'salary_payments'],
             'contribution_date'       => ['type' => 'date', 'label' => '供款日期', 'required' => true, 'default_today' => true],
             'employee_contribution'   => ['type' => 'decimal', 'label' => '员工供款', 'default' => 0],
             'employer_contribution'   => ['type' => 'decimal', 'label' => '雇主供款', 'default' => 0],
-            'additional_contribution' => ['type' => 'decimal', 'label' => '额外自愿供款', 'default' => 0],
+            'additional_contribution' => ['type' => 'decimal', 'label' => '额外自愿供款 (自己放钱进去的部分)', 'default' => 0],
+            'persaraan_percent'       => ['type' => 'decimal', 'label' => 'Akaun Persaraan % (退休户口)', 'default' => 75],
+            'sejahtera_percent'       => ['type' => 'decimal', 'label' => 'Akaun Sejahtera % (安康户口)', 'default' => 15],
+            'fleksibel_percent'       => ['type' => 'decimal', 'label' => 'Akaun Fleksibel % (灵活户口)', 'default' => 10],
+            'persaraan_amount'        => ['type' => 'decimal', 'label' => 'Akaun Persaraan 金额 (自动算，可手动改)', 'default' => 0],
+            'sejahtera_amount'        => ['type' => 'decimal', 'label' => 'Akaun Sejahtera 金额 (自动算，可手动改)', 'default' => 0],
+            'fleksibel_amount'        => ['type' => 'decimal', 'label' => 'Akaun Fleksibel 金额 (自动算，可手动改)', 'default' => 0],
             'notes'                   => ['type' => 'text', 'label' => '备注'],
         ],
         'filters' => [
@@ -252,14 +259,41 @@ $config = [
         ],
     ],
 
+    'fixed_deposits' => [
+        'label' => '定期存款', 'group' => 'finance', 'icon' => '🏦', 'display_field' => 'principal',
+        'note' => '"存入账户"选填：填了的话，新增这笔定存时会自动从那个账户扣出本金 (记一笔支出)。到期后系统自动处理：选"转入账户"会把本金+利息存进你指定的账户；选"自动展期"会本金+利息自动开一张新的定存继续存，不会进到银行余额。利息用单利算：本金 × 年利率% × (期限月数/12)，这是一般定存的算法，不同银行/产品条款可能不完全一样，请自行跟银行核对。',
+        'fields' => [
+            'bank_id'                => ['type' => 'fk', 'label' => '存放银行 (选填)', 'fk_resource' => 'banks'],
+            'principal'              => ['type' => 'decimal', 'label' => '本金', 'required' => true, 'placeholder' => '10000.00'],
+            'interest_rate'          => ['type' => 'decimal', 'label' => '年利率 % (如 3.5)', 'required' => true, 'placeholder' => '3.50'],
+            'tenure_months'          => ['type' => 'number', 'label' => '存款期限 (月)', 'required' => true, 'default' => 3, 'placeholder' => '3'],
+            'source_account_id'      => ['type' => 'fk', 'label' => '存入账户 (选填，新增时会自动从这里扣本金)', 'fk_resource' => 'bank_accounts'],
+            'start_date'             => ['type' => 'date', 'label' => '开始日期', 'required' => true, 'default_today' => true],
+            'maturity_date'          => ['type' => 'date', 'label' => '到期日期 (系统自动算，可手动调整)'],
+            'maturity_action'        => ['type' => 'select', 'label' => '到期处理方式', 'required' => true, 'default' => 'transfer',
+                'options' => ['transfer' => '转入账户', 'renew' => '自动展期 (钱滚钱)']],
+            'destination_account_id' => ['type' => 'fk', 'label' => '到期转入账户', 'fk_resource' => 'bank_accounts',
+                'show_when' => ['field' => 'maturity_action', 'value' => 'transfer']],
+            'status'                 => ['type' => 'select', 'label' => '状态', 'default' => 'active',
+                'options' => ['active' => '存款中', 'matured' => '已到期处理', 'withdrawn' => '提前解约']],
+            'notes'                  => ['type' => 'textarea', 'label' => '备注'],
+        ],
+        'filters' => [
+            ['field' => 'status', 'type' => 'select'],
+        ],
+    ],
+
     'subscriptions' => [
         'label' => '订阅管理', 'group' => 'finance', 'icon' => '🔄', 'display_field' => 'name',
+        'note' => '填好"购买/开始日期"之后，系统会自动从那天起按周期算出每一期的扣费日，到期就自动生成一笔支出记录，不用每次手动点。',
         'fields' => [
             'name'              => ['type' => 'text', 'label' => '订阅名称', 'required' => true, 'placeholder' => '如：Netflix、健身房会员'],
             'cost'              => ['type' => 'decimal', 'label' => '费用', 'required' => true, 'placeholder' => '0.00'],
+            'bank_account_id'   => ['type' => 'fk', 'label' => '自动扣款账户', 'fk_resource' => 'bank_accounts', 'required' => true],
+            'start_date'        => ['type' => 'date', 'label' => '购买/开始日期', 'required' => true, 'default_today' => true],
             'billing_cycle'     => ['type' => 'select', 'label' => '计费周期', 'default' => 'monthly',
                 'options' => ['monthly' => '每月', 'yearly' => '每年']],
-            'next_billing_date' => ['type' => 'date', 'label' => '下次扣费日期'],
+            'next_billing_date' => ['type' => 'date', 'label' => '下次扣费日期 (系统自动计算，可手动调整)'],
             'remind_days_before' => ['type' => 'number', 'label' => '提前几天提醒', 'default' => 3],
             'category'          => ['type' => 'text', 'label' => '分类'],
             'is_active'         => ['type' => 'boolean', 'label' => '订阅中', 'default' => true],
@@ -497,13 +531,14 @@ $config = [
     ],
 
     'reports' => [
-        'label' => '统计报表', 'group' => 'B', 'icon' => '📑', 'display_field' => 'period_start',
+        'label' => '报表汇总', 'group' => 'finance', 'icon' => '📑', 'display_field' => 'period_start',
+        'note' => '选一个期间生成报表：收支/分类占比/前5大支出/薪资/EPF供款/订阅扣费/期末各账户余额，外加习惯打卡次数和日记篇数。同一个期间可以重新生成覆盖最新数字，不会重复堆一份新的。',
         'fields' => [
             'report_type'  => ['type' => 'select', 'label' => '类型', 'required' => true,
-                'options' => ['weekly' => '周报', 'monthly' => '月报']],
+                'options' => ['weekly' => '周报', 'monthly' => '月报', 'yearly' => '年报']],
             'period_start' => ['type' => 'date', 'label' => '开始日期', 'required' => true],
             'period_end'   => ['type' => 'date', 'label' => '结束日期', 'required' => true],
-            'content'      => ['type' => 'json', 'label' => '汇总内容 (JSON)', 'required' => true],
+            'content'      => ['type' => 'json', 'label' => '汇总内容 (JSON，系统自动生成，不需要手动填)', 'required' => true],
         ],
     ],
 
@@ -624,7 +659,7 @@ foreach ([
     'project_categories', 'projects', 'tasks', 'habits', 'habit_logs', 'inbox_items',
     'categories', 'banks', 'bank_accounts', 'tags', 'salary_profiles', 'salary_payments',
     'epf_contributions', 'transactions', 'subscriptions', 'bookmarks', 'contacts',
-    'journal_entries', 'reminders',
+    'journal_entries', 'reminders', 'reports', 'fixed_deposits',
     'daily_metrics', // 虽然不在导航里，但仪表盘的"今日健康"卡片会显示它，一样要隔离
 ] as $r) {
     if (isset($config[$r])) $config[$r]['user_scoped'] = true;

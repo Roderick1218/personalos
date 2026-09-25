@@ -209,6 +209,12 @@ CREATE TABLE `epf_contributions` (
   `employee_contribution` decimal(12,2) NOT NULL DEFAULT 0.00,
   `employer_contribution` decimal(12,2) NOT NULL DEFAULT 0.00,
   `additional_contribution` decimal(12,2) NOT NULL DEFAULT 0.00,
+  `persaraan_percent` decimal(5,2) NOT NULL DEFAULT 75.00 COMMENT 'v4.9: 2024 新制度 Akaun Persaraan/Sejahtera/Fleksibel 三户口比例，默认75/15/10 (我所知的官方默认值，非100%保证，每笔可各自调整)',
+  `sejahtera_percent` decimal(5,2) NOT NULL DEFAULT 15.00,
+  `fleksibel_percent` decimal(5,2) NOT NULL DEFAULT 10.00,
+  `persaraan_amount` decimal(12,2) NOT NULL DEFAULT 0.00,
+  `sejahtera_amount` decimal(12,2) NOT NULL DEFAULT 0.00,
+  `fleksibel_amount` decimal(12,2) NOT NULL DEFAULT 0.00,
   `notes` varchar(255) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
@@ -226,6 +232,40 @@ CREATE TABLE `exercises` (
   `category` varchar(50) DEFAULT NULL COMMENT '如 胸/背/腿/有氧',
   `notes` text DEFAULT NULL,
   PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `fixed_deposits`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `fixed_deposits` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL DEFAULT 1,
+  `bank_id` int(11) DEFAULT NULL,
+  `principal` decimal(12,2) NOT NULL,
+  `interest_rate` decimal(5,2) NOT NULL,
+  `tenure_months` int(11) NOT NULL DEFAULT 3,
+  `source_account_id` int(11) DEFAULT NULL,
+  `opening_transaction_id` int(11) DEFAULT NULL,
+  `start_date` date NOT NULL,
+  `maturity_date` date DEFAULT NULL,
+  `maturity_action` enum('transfer','renew') NOT NULL DEFAULT 'transfer',
+  `destination_account_id` int(11) DEFAULT NULL,
+  `status` enum('active','matured','withdrawn') NOT NULL DEFAULT 'active',
+  `renewed_from_id` int(11) DEFAULT NULL,
+  `notes` text DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `idx_fixed_deposits_user_id` (`user_id`),
+  KEY `idx_fixed_deposits_bank_id` (`bank_id`),
+  KEY `idx_fixed_deposits_source_account` (`source_account_id`),
+  KEY `idx_fixed_deposits_dest_account` (`destination_account_id`),
+  KEY `idx_fixed_deposits_renewed_from` (`renewed_from_id`),
+  KEY `fk_fd_opening_txn` (`opening_transaction_id`),
+  CONSTRAINT `fk_fd_bank` FOREIGN KEY (`bank_id`) REFERENCES `banks` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_fd_dest_account` FOREIGN KEY (`destination_account_id`) REFERENCES `bank_accounts` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_fd_opening_txn` FOREIGN KEY (`opening_transaction_id`) REFERENCES `transactions` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_fd_renewed_from` FOREIGN KEY (`renewed_from_id`) REFERENCES `fixed_deposits` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_fd_source_account` FOREIGN KEY (`source_account_id`) REFERENCES `bank_accounts` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `goals`;
@@ -495,13 +535,15 @@ DROP TABLE IF EXISTS `reports`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `reports` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `report_type` enum('weekly','monthly') NOT NULL,
+  `user_id` int(11) NOT NULL DEFAULT 1,
+  `report_type` enum('weekly','monthly','yearly') NOT NULL,
   `period_start` date NOT NULL,
   `period_end` date NOT NULL,
   `content` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT '汇总后的任务/习惯/财务/健康数据' CHECK (json_valid(`content`)),
   `generated_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uniq_report_period` (`report_type`,`period_start`)
+  UNIQUE KEY `uniq_reports_period` (`user_id`,`report_type`,`period_start`,`period_end`),
+  KEY `idx_reports_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `salary_payments`;
@@ -614,6 +656,8 @@ CREATE TABLE `subscriptions` (
   `user_id` int(11) NOT NULL DEFAULT 1,
   `name` varchar(100) NOT NULL,
   `cost` decimal(10,2) NOT NULL,
+  `bank_account_id` int(11) DEFAULT NULL,
+  `start_date` date DEFAULT NULL,
   `billing_cycle` enum('monthly','yearly') NOT NULL DEFAULT 'monthly',
   `next_billing_date` date DEFAULT NULL,
   `remind_days_before` int(11) NOT NULL DEFAULT 3,
@@ -622,7 +666,9 @@ CREATE TABLE `subscriptions` (
   `notes` text DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
-  KEY `idx_subscriptions_user_id` (`user_id`)
+  KEY `idx_subscriptions_user_id` (`user_id`),
+  KEY `bank_account_id` (`bank_account_id`),
+  CONSTRAINT `fk_subscriptions_bank_account` FOREIGN KEY (`bank_account_id`) REFERENCES `bank_accounts` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `tags`;
@@ -762,6 +808,7 @@ CREATE TABLE `users` (
   `username` varchar(50) NOT NULL,
   `password_hash` varchar(255) NOT NULL,
   `display_name` varchar(100) DEFAULT NULL,
+  `role` enum('admin','user') NOT NULL DEFAULT 'user',
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_username` (`username`)
@@ -831,8 +878,8 @@ CREATE TABLE `workouts` (
 -- 默认值 1 对上)。第一次用完记得自己去网站左边"系统"分组的 🔑 图标改密码。
 -- =====================================================================
 
-INSERT INTO users (username, password_hash, display_name) VALUES
-  ('Roderick', '$2y$10$lirEi/7bBcqkeNJ4kSOZ1eWJAJSZ8qR.mueoGwa3Cj50gqbKMmFZi', 'Roderick');
+INSERT INTO users (username, password_hash, display_name, role) VALUES
+  ('Roderick', '$2y$10$lirEi/7bBcqkeNJ4kSOZ1eWJAJSZ8qR.mueoGwa3Cj50gqbKMmFZi', 'Roderick', 'admin');
 
 INSERT INTO categories (name, type, color) VALUES
   ('薪水', 'income', '#22c55e'),

@@ -4,17 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>个人生活 OS</title>
-<link rel="stylesheet" href="css/style.css?v=20260924a">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css?v=20260925j">
 </head>
 <body>
 <div id="login-screen" style="display:none;">
   <form id="login-form">
     <h1><span class="app-icon">🧭</span> 个人生活 OS</h1>
-    <p class="login-sub">多人共用，登录后只看得到自己的东西</p>
+    <p class="login-sub" id="login-sub">多人共用，登录后只看得到自己的东西</p>
     <div class="field"><label>用户名</label><input type="text" id="login-username" autocomplete="username" required></div>
+    <div class="field" id="login-display-name-field" style="display:none;"><label>显示名称 (选填)</label><input type="text" id="login-display-name" autocomplete="nickname"></div>
     <div class="field"><label>密码</label><input type="password" id="login-password" autocomplete="current-password" required></div>
+    <div class="field" id="login-password-confirm-field" style="display:none;"><label>确认密码</label><input type="password" id="login-password-confirm" autocomplete="new-password"></div>
     <div id="login-error" class="login-error"></div>
-    <button type="submit" class="btn" style="width:100%;">登录</button>
+    <button type="submit" class="btn" id="login-submit-btn" style="width:100%;">登录</button>
+    <p class="login-toggle"><a href="#" id="login-mode-toggle">还没有账号？点这里注册</a></p>
   </form>
 </div>
 <div id="app">
@@ -53,6 +59,6 @@
   </nav>
 </div>
 <div id="modal-root"></div>
-<script src="js/app.js?v=20260924a"></script>
+<script src="js/app.js?v=20260925j"></script>
 </body>
 </html>
