@@ -13,7 +13,7 @@
 database/
 backup/
 backups/
-!个人系统_supabase_删除所有.sql
+!个人系统_supabase_删除所有表.sql
 
 # Local personal data
 data/
