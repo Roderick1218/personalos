@@ -40,9 +40,9 @@ if ($action === 'login') {
         exit;
     }
     session_regenerate_id(true); // 防止 session fixation
-    $_SESSION['user_id'] = (int)$user['id'];
+    $_SESSION['user_id'] = $user['id']; // 现在是 UUID 字符串，不是数字，不能再 (int) 转型
     $_SESSION['username'] = $user['username'];
-    echo json_encode(['ok' => true, 'user' => ['id' => (int)$user['id'], 'username' => $user['username'], 'display_name' => $user['display_name'], 'role' => $user['role']]], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['ok' => true, 'user' => ['id' => $user['id'], 'username' => $user['username'], 'display_name' => $user['display_name'], 'role' => $user['role']]], JSON_UNESCAPED_UNICODE);
     exit;
 }
 if ($action === 'register') {
@@ -79,7 +79,7 @@ if ($action === 'register') {
     $ins = $db->prepare("INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?)");
     $ins->bind_param('sss', $username, $hash, $displayName);
     $ins->execute();
-    $newUserId = (int)$ins->insert_id;
+    $newUserId = $ins->insert_id;
 
     session_regenerate_id(true);
     $_SESSION['user_id'] = $newUserId;
@@ -111,7 +111,7 @@ if ($action === 'me') {
         echo json_encode(['ok' => true, 'user' => null], JSON_UNESCAPED_UNICODE);
         exit;
     }
-    echo json_encode(['ok' => true, 'user' => ['id' => (int)$row['id'], 'username' => $row['username'], 'display_name' => $row['display_name'], 'role' => $row['role']]], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['ok' => true, 'user' => ['id' => $row['id'], 'username' => $row['username'], 'display_name' => $row['display_name'], 'role' => $row['role']]], JSON_UNESCAPED_UNICODE);
     exit;
 }
 if ($action === 'change_password') {
@@ -152,7 +152,7 @@ if (empty($_SESSION['user_id'])) {
     echo json_encode(['ok' => false, 'error' => '请先登录', 'code' => 'AUTH_REQUIRED'], JSON_UNESCAPED_UNICODE);
     exit;
 }
-$currentUserId = (int)$_SESSION['user_id'];
+$currentUserId = $_SESSION['user_id']; // UUID 字符串，不是数字，不能再 (int) 转型
 // 权限每次都直接查表现算，不信任 session 里缓存的 role —— 万一 admin 刚把某人的权限
 // 降级/升级，对方不需要重新登入就能立刻反映最新权限，不会有"改了权限但还没生效"的空窗期。
 $currentUserRoleStmt = get_db()->prepare("SELECT role FROM users WHERE id = ?");
@@ -164,6 +164,9 @@ $isAdmin = $currentUserRole === 'admin';
 
 function normalize_value(array $meta, $value) {
     if ($value === null || $value === '') {
+        // 2026-09-28: 从 Supabase 换回 InfinityFree 的 MySQL —— 布尔栏位是 tinyint(1)，
+        // 要传整数 0/1 (不能传 PHP 的 true/false，bind_param 一律用 's' 类型绑定，
+        // false 会被转成空字串 "" 塞进整数栏位，严格模式下会出错)。
         return ($meta['type'] === 'boolean') ? 0 : null;
     }
     switch ($meta['type']) {
@@ -190,12 +193,12 @@ function normalize_value(array $meta, $value) {
     }
 }
 
-function get_salary_category_id(mysqli $db, int $userId): ?int {
+function get_salary_category_id($db, string $userId): ?string {
     $stmt = $db->prepare("SELECT id FROM categories WHERE type='income' AND name='薪水' AND user_id = ? LIMIT 1");
     $stmt->bind_param('i', $userId);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
-    return $row ? (int)$row['id'] : null;
+    return $row ? $row['id'] : null;
 }
 
 // 发薪记录是"模板之外的历史事实"：存了之后要自动在 transactions 里生出对应的一笔收入
@@ -203,7 +206,7 @@ function get_salary_category_id(mysqli $db, int $userId): ?int {
 // 编辑/删除发薪记录时，这两处关联数据要跟着同步，不然会留下对不上账的孤儿记录。
 // status != 'paid' (草稿/待发放/已取消) 的记录不应该计入实际余额 —— 撤掉已生成的交易/EPF记录，
 // 等状态改回"已发放"时再重新生成，避免"还没到手的钱"被算成已经到手。
-function sync_salary_payment(mysqli $db, int $paymentId): void {
+function sync_salary_payment($db, string $paymentId): void {
     $stmt = $db->prepare("SELECT * FROM salary_payments WHERE id = ?");
     $stmt->bind_param('i', $paymentId);
     $stmt->execute();
@@ -226,7 +229,7 @@ function sync_salary_payment(mysqli $db, int $paymentId): void {
     }
 
     $description = $sp['period_label'] . ' 薪资';
-    $spUserId = (int)$sp['user_id'];
+    $spUserId = $sp['user_id'];
     $categoryId = get_salary_category_id($db, $spUserId);
 
     if (!empty($sp['transaction_id'])) {
@@ -294,7 +297,7 @@ function sync_salary_payment(mysqli $db, int $paymentId): void {
 // 帮所有"在职中 + 每月固定 + 已经设了发薪日"的档案，把"这个月该发的那笔"自动生出来 (如果发薪日已经到了、
 // 而且这个月还没生成过的话) —— 幂等: 用 salary_profile_id + period_label 当天然的"这个月生成过没有"判断，
 // 不会重复生成；只处理"发薪日已经到了或是今天"的当月，不会提前生出还没到的月份。
-function auto_generate_due_salary_payments(mysqli $db, int $userId): array {
+function auto_generate_due_salary_payments($db, string $userId): array {
     $generated = [];
     $skipped = []; // 发薪日已经到了、但缺东西没法自动生成的档案 —— 之前是完全静默跳过，用户完全不知道
                     // 为什么"到了发薪日却没有记录"，这次改成收集起来，让前端可以提示用户去补
@@ -401,12 +404,12 @@ function auto_generate_due_salary_payments(mysqli $db, int $userId): array {
 // 往后推一期 —— 循环推进 (跟 advance_due_reminders() 同样的做法)，这样好几期没打开网站也能一次性补齐，
 // 不用连续开好几次网站才能一期一期追上。幂等靠 next_billing_date 本身: 生成完就立刻往后推，下次
 // 再跑这个函数时同一期不会重复触发。
-function auto_generate_due_subscriptions(mysqli $db, int $userId): array {
+function auto_generate_due_subscriptions($db, string $userId): array {
     $generated = [];
     $skipped = []; // 已经到期但缺"自动扣款账户"没法生成的订阅 —— 收集起来让前端提示用户去补，不能悄悄跳过
     $today = date('Y-m-d');
 
-    $stmt = $db->prepare("SELECT * FROM subscriptions WHERE user_id = ? AND is_active = 1");
+    $stmt = $db->prepare("SELECT * FROM subscriptions WHERE user_id = ? AND is_active = true");
     $stmt->bind_param('i', $userId);
     $stmt->execute();
     $subs = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -433,7 +436,7 @@ function auto_generate_due_subscriptions(mysqli $db, int $userId): array {
             $ins->bind_param('idsis', $userId, $s['cost'], $due, $s['bank_account_id'], $desc);
             $ins->execute();
 
-            $generated[] = ['subscription_id' => (int)$s['id'], 'name' => $s['name'], 'amount' => (float)$s['cost'], 'date' => $due];
+            $generated[] = ['subscription_id' => $s['id'], 'name' => $s['name'], 'amount' => (float)$s['cost'], 'date' => $due];
 
             $interval = $s['billing_cycle'] === 'yearly' ? '+1 year' : '+1 month';
             $due = date('Y-m-d', strtotime($interval, strtotime($due)));
@@ -453,7 +456,7 @@ function auto_generate_due_subscriptions(mysqli $db, int $userId): array {
 // 新增定存时，如果填了"存入账户"，自动记一笔支出把本金从那个账户挪出去 (定存本金不算"可花的钱"，
 // 不这样做的话资产分布/总余额会一直把这笔钱算成活期存款里，跟现实脱节)。只在 create 时呼叫一次，
 // 不会在编辑既有记录时重复扣。
-function sync_fixed_deposit_open(mysqli $db, int $fdId): void {
+function sync_fixed_deposit_open($db, string $fdId): void {
     $stmt = $db->prepare("SELECT * FROM fixed_deposits WHERE id = ?");
     $stmt->bind_param('i', $fdId);
     $stmt->execute();
@@ -480,7 +483,7 @@ function sync_fixed_deposit_open(mysqli $db, int $fdId): void {
 // 记录 (start_date=上一期到期日，maturity_action/destination_account_id 都沿用)，旧的这张标记已处理，
 // 不会进到银行余额里。循环推进 (像 auto_generate_due_subscriptions 一样) 是为了短期限定存好几期没打开
 // 网站时也能一次性追上，不用连续开好几次才逐期展期。
-function auto_generate_due_fixed_deposits(mysqli $db, int $userId): array {
+function auto_generate_due_fixed_deposits($db, string $userId): array {
     $matured = [];
     $skipped = [];
     $today = date('Y-m-d');
@@ -492,7 +495,7 @@ function auto_generate_due_fixed_deposits(mysqli $db, int $userId): array {
 
     foreach ($fds as $fd) {
         $current = $fd;
-        $currentId = (int)$fd['id'];
+        $currentId = $fd['id'];
         $guard = 0;
 
         while (!empty($current['maturity_date']) && $current['maturity_date'] <= $today && $guard < 60) {
@@ -591,7 +594,7 @@ function next_reminder_time(string $fromDateTime, string $rule, ?int $interval, 
 // 提醒被标记"已发送"(用户勾了 is_sent，或者是从下面 advance_due_reminders 判断时间已经过了) 时，
 // 如果这条设了"重复"，不应该就这样结束 —— 自动把 remind_at 推到下一次、is_sent 重新变回未发送，
 // 这样用户不用每次都手动重新建一条一样的提醒。
-function maybe_advance_recurring_reminder(mysqli $db, int $id): void {
+function maybe_advance_recurring_reminder($db, string $id): void {
     $stmt = $db->prepare("SELECT * FROM reminders WHERE id = ?");
     $stmt->bind_param('i', $id);
     $stmt->execute();
@@ -601,7 +604,7 @@ function maybe_advance_recurring_reminder(mysqli $db, int $id): void {
     if (empty($r['repeat_rule']) || $r['repeat_rule'] === 'none') return;
 
     $next = next_reminder_time($r['remind_at'], $r['repeat_rule'], $r['repeat_interval'] ?? null, $r['repeat_unit'] ?? null);
-    $upd = $db->prepare("UPDATE reminders SET remind_at = ?, is_sent = 0 WHERE id = ?");
+    $upd = $db->prepare("UPDATE reminders SET remind_at = ?, is_sent = false WHERE id = ?");
     $upd->bind_param('si', $next, $id);
     $upd->execute();
 }
@@ -609,10 +612,10 @@ function maybe_advance_recurring_reminder(mysqli $db, int $id): void {
 // 网站本身没有会一直跑的后台服务去"到点提醒"，所以每次打开"通用提醒"列表页时顺便检查一次:
 // 有重复设置、但提醒时间已经过去却还没处理 (is_sent 还是 0) 的，直接自动往后排到下一个未来的时间点
 // (可能要连续推好几次 —— 比如每天提醒的东西一个星期没打开网站，得从过去一路推到今天/明天，而不是只推一天)。
-function advance_due_reminders(mysqli $db, int $userId): void {
+function advance_due_reminders($db, string $userId): void {
     $now = date('Y-m-d H:i:s');
     $stmt = $db->prepare(
-        "SELECT * FROM reminders WHERE user_id = ? AND repeat_rule IS NOT NULL AND repeat_rule != 'none' AND is_sent = 0 AND remind_at <= ?"
+        "SELECT * FROM reminders WHERE user_id = ? AND repeat_rule IS NOT NULL AND repeat_rule != 'none' AND is_sent = false AND remind_at <= ?"
     );
     $stmt->bind_param('is', $userId, $now);
     $stmt->execute();
@@ -633,13 +636,13 @@ function advance_due_reminders(mysqli $db, int $userId): void {
     }
 }
 
-function compute_bank_balances(mysqli $db, int $userId): array {
-    $stmt0 = $db->prepare("SELECT * FROM bank_accounts WHERE user_id = ? AND is_active = 1 ORDER BY id");
+function compute_bank_balances($db, string $userId): array {
+    $stmt0 = $db->prepare("SELECT * FROM bank_accounts WHERE user_id = ? AND is_active = true ORDER BY id");
     $stmt0->bind_param('i', $userId);
     $stmt0->execute();
     $accounts = $stmt0->get_result()->fetch_all(MYSQLI_ASSOC);
     foreach ($accounts as &$a) {
-        $id = (int)$a['id'];
+        $id = $a['id'];
         $stmt = $db->prepare(
             "SELECT
                 COALESCE(SUM(CASE WHEN type = 'income' AND bank_account_id = ? THEN amount ELSE 0 END), 0) AS income,
@@ -667,7 +670,7 @@ function compute_bank_balances(mysqli $db, int $userId): array {
     return $accounts;
 }
 
-function build_dashboard(mysqli $db, int $userId): array {
+function build_dashboard($db, string $userId): array {
     $today = date('Y-m-d');
     $out = ['ok' => true, 'date' => $today];
 
@@ -691,7 +694,7 @@ function build_dashboard(mysqli $db, int $userId): array {
     $stmt->execute();
     $out['tasks_today'] = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
-    $stmt = $db->prepare("SELECT * FROM habits WHERE user_id = ? AND is_active = 1 ORDER BY id");
+    $stmt = $db->prepare("SELECT * FROM habits WHERE user_id = ? AND is_active = true ORDER BY id");
     $stmt->bind_param('i', $userId);
     $stmt->execute();
     $habits = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -832,7 +835,7 @@ function build_dashboard(mysqli $db, int $userId): array {
     $stmt->execute();
     $out['metric_today'] = $stmt->get_result()->fetch_assoc();
 
-    $inboxStmt = $db->prepare("SELECT * FROM inbox_items WHERE user_id = ? AND is_processed = 0 ORDER BY id DESC LIMIT 10");
+    $inboxStmt = $db->prepare("SELECT * FROM inbox_items WHERE user_id = ? AND is_processed = false ORDER BY id DESC LIMIT 10");
     $inboxStmt->bind_param('i', $userId);
     $inboxStmt->execute();
     $out['inbox_unprocessed'] = $inboxStmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -840,7 +843,7 @@ function build_dashboard(mysqli $db, int $userId): array {
     // 即将到来的提醒: 订阅续费 (在各自的 remind_days_before 窗口内) + 生日 (未来 14 天内, 不看年份)
     $todayDate = new DateTime($today);
 
-    $subStmt = $db->prepare("SELECT * FROM subscriptions WHERE user_id = ? AND is_active = 1 AND next_billing_date IS NOT NULL");
+    $subStmt = $db->prepare("SELECT * FROM subscriptions WHERE user_id = ? AND is_active = true AND next_billing_date IS NOT NULL");
     $subStmt->bind_param('i', $userId);
     $subStmt->execute();
     $subs = $subStmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -883,7 +886,7 @@ function build_dashboard(mysqli $db, int $userId): array {
 // 换成"任意自订区间" (周报/月报/年报都只是区间长短不同，算法完全共用)。
 // 存成 reports.content 这份 JSON 快照，之后不会因为交易被改/删就跟着变 —— 想要最新数字
 // 就重新生成同一个区间的报表 (会覆盖，不会重复堆一份)。
-function build_report_content(mysqli $db, int $userId, string $periodStart, string $periodEnd): array {
+function build_report_content($db, string $userId, string $periodStart, string $periodEnd): array {
     $out = ['period_start' => $periodStart, 'period_end' => $periodEnd];
 
     $stmt = $db->prepare("SELECT * FROM transactions WHERE user_id = ? AND transaction_date BETWEEN ? AND ?");
@@ -961,13 +964,13 @@ function build_report_content(mysqli $db, int $userId, string $periodStart, stri
 
     // 期末各账户余额快照: 只算到 period_end 为止发生的交易，不是"现在"的余额 ——
     // 报表本来就该反映"那个时间点"的状态，即使之后又记了新账，这份报表的数字也不该跟着变。
-    $accStmt = $db->prepare("SELECT * FROM bank_accounts WHERE user_id = ? AND is_active = 1 ORDER BY id");
+    $accStmt = $db->prepare("SELECT * FROM bank_accounts WHERE user_id = ? AND is_active = true ORDER BY id");
     $accStmt->bind_param('i', $userId);
     $accStmt->execute();
     $accountBalances = [];
     $totalBalance = 0.0;
     foreach ($accStmt->get_result()->fetch_all(MYSQLI_ASSOC) as $a) {
-        $id = (int)$a['id'];
+        $id = $a['id'];
         $bstmt = $db->prepare(
             "SELECT
                 COALESCE(SUM(CASE WHEN type='income' AND bank_account_id=? THEN amount ELSE 0 END),0) AS income,
@@ -989,7 +992,7 @@ function build_report_content(mysqli $db, int $userId, string $periodStart, stri
     $stmt = $db->prepare(
         "SELECT h.name AS name, COUNT(*) AS cnt FROM habit_logs hl
          JOIN habits h ON h.id = hl.habit_id
-         WHERE hl.user_id = ? AND hl.completed = 1 AND hl.log_date BETWEEN ? AND ?
+         WHERE hl.user_id = ? AND hl.completed = true AND hl.log_date BETWEEN ? AND ?
          GROUP BY h.id, h.name ORDER BY cnt DESC"
     );
     $stmt->bind_param('iss', $userId, $periodStart, $periodEnd);
@@ -1054,7 +1057,7 @@ if ($action === 'admin_create_user') {
     $ins = $db->prepare("INSERT INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?)");
     $ins->bind_param('ssss', $username, $hash, $displayName, $role);
     $ins->execute();
-    echo json_encode(['ok' => true, 'id' => (int)$ins->insert_id], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['ok' => true, 'id' => $ins->insert_id], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -1065,7 +1068,7 @@ if ($action === 'admin_update_user') {
         exit;
     }
     $db = get_db();
-    $targetId = (int)($body['id'] ?? 0);
+    $targetId = (string)($body['id'] ?? '');
     $target = $db->prepare("SELECT * FROM users WHERE id = ?");
     $target->bind_param('i', $targetId);
     $target->execute();
@@ -1152,7 +1155,7 @@ if ($action === 'admin_delete_user') {
         exit;
     }
     $db = get_db();
-    $targetId = (int)($body['id'] ?? 0);
+    $targetId = (string)($body['id'] ?? '');
     if ($targetId === $currentUserId) {
         http_response_code(400);
         echo json_encode(['ok' => false, 'error' => '不能删除自己，请找另一个管理员帮忙删'], JSON_UNESCAPED_UNICODE);
@@ -1276,7 +1279,7 @@ if ($action === 'search') {
                 'resource' => $tbl,
                 'resource_label' => $config[$tbl]['label'] ?? $tbl,
                 'icon' => $config[$tbl]['icon'] ?? '📄',
-                'id' => (int)$row['id'],
+                'id' => $row['id'],
                 'title' => (string)$spec['title']($row),
                 'sub' => (string)$spec['sub']($row),
             ];
@@ -1290,7 +1293,7 @@ if ($action === 'search') {
 // 要用户手动点一下才生成对应的支出记录，并把下次扣费日期推后一个周期。
 if ($action === 'mark_subscription_paid') {
     $db = get_db();
-    $id = (int)($body['id'] ?? 0);
+    $id = (string)($body['id'] ?? '');
     $stmt = $db->prepare("SELECT * FROM subscriptions WHERE id = ? AND user_id = ?");
     $stmt->bind_param('ii', $id, $currentUserId);
     $stmt->execute();
@@ -1355,7 +1358,7 @@ if ($action === 'generate_report') {
         $upd = $db->prepare("UPDATE reports SET content = ?, generated_at = NOW() WHERE id = ?");
         $upd->bind_param('si', $contentJson, $existing['id']);
         $upd->execute();
-        $id = (int)$existing['id'];
+        $id = $existing['id'];
     } else {
         $ins = $db->prepare("INSERT INTO reports (user_id, report_type, period_start, period_end, content) VALUES (?, ?, ?, ?, ?)");
         $ins->bind_param('issss', $currentUserId, $reportType, $periodStart, $periodEnd, $contentJson);
@@ -1490,7 +1493,7 @@ switch ($action) {
     }
 
     case 'get': {
-        $id = (int)($body['id'] ?? 0);
+        $id = (string)($body['id'] ?? '');
         if ($userScoped) {
             $stmt = $db->prepare("SELECT * FROM `$table` WHERE id = ? AND user_id = ?");
             $stmt->bind_param('ii', $id, $currentUserId);
@@ -1578,7 +1581,7 @@ switch ($action) {
         if ($resource === 'reminders' && array_key_exists('remind_at', $data) && preg_match('/^\d{2}:\d{2}$/', (string)$data['remind_at'])) {
             $time = $data['remind_at'];
             if ($action === 'update') {
-                $existingId = (int)($body['id'] ?? 0);
+                $existingId = (string)($body['id'] ?? '');
                 $exStmt = $db->prepare("SELECT remind_at FROM reminders WHERE id = ? AND user_id = ?");
                 $exStmt->bind_param('ii', $existingId, $currentUserId);
                 $exStmt->execute();
@@ -1635,10 +1638,10 @@ switch ($action) {
             if ($resource === 'fixed_deposits') sync_fixed_deposit_open($db, $newId);
             echo json_encode(['ok' => true, 'id' => $newId], JSON_UNESCAPED_UNICODE);
         } else {
-            $id = (int)($body['id'] ?? 0);
-            $setList = implode(',', array_map(fn($c) => "`$c` = ?", $cols));
+            $id = (string)($body['id'] ?? '');
+            $setList = implode(',', array_map(fn($c) => "$c = ?", $cols));
             // 多用户隔离: 只能改自己的行，就算知道别人的 id 也一样改不动 (WHERE 直接过滤掉)
-            $sql = "UPDATE `$table` SET $setList WHERE id = ?" . ($userScoped ? ' AND user_id = ?' : '');
+            $sql = "UPDATE $table SET $setList WHERE id = ?" . ($userScoped ? ' AND user_id = ?' : '');
             $types .= 'i';
             $vals[] = $id;
             if ($userScoped) { $types .= 'i'; $vals[] = $currentUserId; }
@@ -1653,7 +1656,7 @@ switch ($action) {
     }
 
     case 'delete': {
-        $id = (int)($body['id'] ?? 0);
+        $id = (string)($body['id'] ?? '');
 
         // 防止误删已经被引用的标签/银行账户，先检查有没有记录在用
         $usageChecks = [

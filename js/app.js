@@ -1,4 +1,3 @@
-const API = 'api.php';
 // 按功能分类，不按使用频率分 (用户明确要求去掉"每天/每周"这种框架)
 const GROUP_LABELS = { core: '核心', finance: '财务', personal: '个人', tools: '工具', system: '系统' };
 const GROUP_ORDER = ['core', 'finance', 'personal', 'tools', 'system'];
@@ -44,17 +43,15 @@ async function loadFkFiltered(resourceName, filter) {
 }
 
 async function api(payload) {
-  const res = await fetch(API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify(payload),
-  });
-  const json = await res.json();
-  if (res.status === 401 || json.code === 'AUTH_REQUIRED') {
-    // session 掉了 (比如另一台设备登出、服务器重启清了 session) —— 直接弹回登录页，不留在半吊子界面
-    showLoginScreen();
-    throw new Error(json.error || '请先登录');
+  if (payload.action !== 'meta') {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) {
+      // session 掉了 (比如另一台设备登出、token 过期) —— 直接弹回登录页，不留在半吊子界面
+      showLoginScreen();
+      throw new Error('请先登录');
+    }
   }
+  const json = await SupabaseBridge.call(payload);
   if (json.ok === false) throw new Error(json.error || '请求失败');
   return json;
 }
@@ -1963,12 +1960,7 @@ function hideLoginScreen() {
 // 登录/登出/查状态这几个不走 api() (api() 遇到 401 会自己弹回登录页，这几个本身就是在处理登录页，
 // 会绕圈)，直接用最原始的 fetch。
 async function rawApi(payload) {
-  const res = await fetch(API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify(payload),
-  });
-  return res.json();
+  return SupabaseBridge.rawCall(payload);
 }
 
 let LOGIN_MODE = 'login'; // 'login' | 'register'
