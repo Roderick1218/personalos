@@ -40,8 +40,8 @@ $config = [
             'tag_id'      => ['type' => 'fk', 'label' => '标签', 'fk_resource' => 'tags', 'fk_filter' => ['module' => 'task']],
             'title'       => ['type' => 'text', 'label' => '标题', 'required' => true, 'placeholder' => '要做什么？如：交电费'],
             'description' => ['type' => 'textarea', 'label' => '描述', 'placeholder' => '补充细节 (选填)'],
-            'status'      => ['type' => 'select', 'label' => '状态', 'default' => 'inbox',
-                'options' => ['inbox' => '收件箱', 'today' => '今天', 'upcoming' => '即将到来', 'done' => '已完成']],
+            'status'      => ['type' => 'select', 'label' => '状态', 'default' => 'todo',
+                'options' => ['todo' => '未完成', 'done' => '已完成']],
             'priority'    => ['type' => 'select', 'label' => '优先级', 'default' => 'medium',
                 'options' => ['low' => '低', 'medium' => '中', 'high' => '高', 'urgent' => '紧急']],
             'due_date'    => ['type' => 'date', 'label' => '截止日期'],
@@ -75,6 +75,9 @@ $config = [
             'completed' => ['type' => 'boolean', 'label' => '已完成', 'default' => true],
             'note'      => ['type' => 'text', 'label' => '备注'],
         ],
+        'filters' => [
+            ['field' => 'log_date', 'type' => 'daterange'],
+        ],
     ],
 
     'journal_entries' => [
@@ -83,11 +86,11 @@ $config = [
             'entry_date' => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
             'content'    => ['type' => 'textarea', 'label' => '内容 (支持 Markdown)', 'placeholder' => '今天发生了什么、想到了什么...'],
             'mood'       => ['type' => 'number', 'label' => '心情 (1-5，1=很差，5=很好)', 'min' => 1, 'max' => 5, 'placeholder' => '1-5'],
-            'tags'       => ['type' => 'tags', 'label' => '标签 (逗号分隔)', 'placeholder' => '如：工作, 旅行'],
+            'tag_id'     => ['type' => 'fk', 'label' => '标签 (选填)', 'fk_resource' => 'tags', 'fk_filter' => ['module' => 'journal']],
         ],
         'filters' => [
             ['field' => 'entry_date', 'type' => 'daterange'],
-            ['field' => 'tags', 'type' => 'tag_search'],
+            ['field' => 'tag_id', 'type' => 'fk_select'],
         ],
     ],
 
@@ -144,7 +147,7 @@ $config = [
             'name'   => ['type' => 'text', 'label' => '标签名称', 'required' => true, 'placeholder' => '如：工作、旅行'],
             'color'  => ['type' => 'color', 'label' => '颜色'],
             'module' => ['type' => 'select', 'label' => '适用模块 (这个标签只会出现在哪个模块的下拉里)', 'required' => true,
-                'options' => ['finance' => '财务', 'task' => '任务', 'link' => '链接']],
+                'options' => ['finance' => '财务', 'task' => '任务', 'link' => '链接', 'reminder' => '提醒', 'journal' => '日记', 'contact' => '联系人']],
         ],
     ],
 
@@ -158,9 +161,18 @@ $config = [
             'salary_frequency'     => ['type' => 'select', 'label' => '发薪频率', 'default' => 'monthly',
                 'options' => ['monthly' => '每月', 'biweekly' => '每两周', 'weekly' => '每周', 'custom' => '不固定']],
             'salary_payment_day'   => ['type' => 'number', 'label' => '每月发薪日 (1-31，可留空)', 'min' => 1, 'max' => 31],
+            'prorate_basis'        => ['type' => 'select', 'label' => '入职/离职不足整月时，按比例算基本薪资要除以哪个月的天数', 'default' => 'current_month',
+                'options' => ['current_month' => '这个月的天数', 'previous_month' => '上个月的天数 (有些公司发薪日算法是这样)']],
             'bank_account_id'      => ['type' => 'fk', 'label' => '入账账户 (发薪日自动生成记录一定要有这个才能生成)', 'fk_resource' => 'bank_accounts', 'required' => true],
-            'employee_epf_percent' => ['type' => 'decimal', 'label' => '员工 EPF % (默认)', 'default' => 11],
-            'employer_epf_percent' => ['type' => 'decimal', 'label' => '雇主 EPF % (默认)', 'default' => 13],
+            'enable_epf'           => ['type' => 'boolean', 'label' => '需要计算 EPF', 'default' => true],
+            'employee_epf_percent' => ['type' => 'decimal', 'label' => '员工 EPF % (默认)', 'default' => 11, 'show_when' => ['field' => 'enable_epf', 'value' => 'true']],
+            'employer_epf_percent' => ['type' => 'decimal', 'label' => '雇主 EPF % (默认)', 'default' => 13, 'show_when' => ['field' => 'enable_epf', 'value' => 'true']],
+            'enable_socso'         => ['type' => 'boolean', 'label' => '需要计算 SOCSO', 'default' => false],
+            'employee_socso_percent' => ['type' => 'decimal', 'label' => '员工 SOCSO % (默认)', 'default' => 0.5, 'show_when' => ['field' => 'enable_socso', 'value' => 'true']],
+            'employer_socso_percent' => ['type' => 'decimal', 'label' => '雇主 SOCSO % (默认)', 'default' => 1.75, 'show_when' => ['field' => 'enable_socso', 'value' => 'true']],
+            'enable_eis'           => ['type' => 'boolean', 'label' => '需要计算 EIS', 'default' => false],
+            'employee_eis_percent' => ['type' => 'decimal', 'label' => '员工 EIS % (默认)', 'default' => 0.2, 'show_when' => ['field' => 'enable_eis', 'value' => 'true']],
+            'employer_eis_percent' => ['type' => 'decimal', 'label' => '雇主 EIS % (默认)', 'default' => 0.2, 'show_when' => ['field' => 'enable_eis', 'value' => 'true']],
             'start_date'           => ['type' => 'date', 'label' => '生效日期', 'required' => true, 'default_today' => true],
             'end_date'             => ['type' => 'date', 'label' => '结束日期 (在职中可留空)'],
             'status'               => ['type' => 'select', 'label' => '状态', 'default' => 'active',
@@ -190,6 +202,14 @@ $config = [
             'employee_epf_amount'  => ['type' => 'decimal', 'label' => '员工 EPF 金额', 'default' => 0],
             'employer_epf_percent' => ['type' => 'decimal', 'label' => '雇主 EPF %', 'default' => 13],
             'employer_epf_amount'  => ['type' => 'decimal', 'label' => '雇主 EPF 金额', 'default' => 0],
+            'employee_socso_percent' => ['type' => 'decimal', 'label' => '员工 SOCSO %', 'default' => 0],
+            'employee_socso_amount'  => ['type' => 'decimal', 'label' => '员工 SOCSO 金额', 'default' => 0],
+            'employer_socso_percent' => ['type' => 'decimal', 'label' => '雇主 SOCSO %', 'default' => 0],
+            'employer_socso_amount'  => ['type' => 'decimal', 'label' => '雇主 SOCSO 金额', 'default' => 0],
+            'employee_eis_percent' => ['type' => 'decimal', 'label' => '员工 EIS %', 'default' => 0],
+            'employee_eis_amount'  => ['type' => 'decimal', 'label' => '员工 EIS 金额', 'default' => 0],
+            'employer_eis_percent' => ['type' => 'decimal', 'label' => '雇主 EIS %', 'default' => 0],
+            'employer_eis_amount'  => ['type' => 'decimal', 'label' => '雇主 EIS 金额', 'default' => 0],
             'other_deductions'     => ['type' => 'decimal', 'label' => '其他扣除', 'default' => 0],
             'net_salary'           => ['type' => 'decimal', 'label' => '实收净额 (入账金额)', 'required' => true],
             'bank_account_id'      => ['type' => 'fk', 'label' => '入账账户', 'fk_resource' => 'bank_accounts', 'required' => true],
@@ -220,6 +240,36 @@ $config = [
             'sejahtera_amount'        => ['type' => 'decimal', 'label' => 'Akaun Sejahtera 金额 (自动算，可手动改)', 'default' => 0],
             'fleksibel_amount'        => ['type' => 'decimal', 'label' => 'Akaun Fleksibel 金额 (自动算，可手动改)', 'default' => 0],
             'notes'                   => ['type' => 'text', 'label' => '备注'],
+        ],
+        'filters' => [
+            ['field' => 'contribution_date', 'type' => 'month'],
+        ],
+    ],
+
+    'socso_contributions' => [
+        'label' => 'SOCSO 供款记录', 'group' => 'finance', 'icon' => '🛡️', 'display_field' => 'contribution_date',
+        'note' => '这些记录会在薪资档案开启"需要计算 SOCSO"之后，随发薪记录自动生成，通常不用手动新增——想看某一笔的详细金额，点进去看就好。',
+        'fields' => [
+            'salary_payment_id'     => ['type' => 'fk', 'label' => '关联发薪记录 (手动额外供款可留空)', 'fk_resource' => 'salary_payments'],
+            'contribution_date'     => ['type' => 'date', 'label' => '供款日期', 'required' => true, 'default_today' => true],
+            'employee_contribution' => ['type' => 'decimal', 'label' => '员工供款', 'default' => 0],
+            'employer_contribution' => ['type' => 'decimal', 'label' => '雇主供款', 'default' => 0],
+            'notes'                 => ['type' => 'text', 'label' => '备注'],
+        ],
+        'filters' => [
+            ['field' => 'contribution_date', 'type' => 'month'],
+        ],
+    ],
+
+    'eis_contributions' => [
+        'label' => 'EIS 供款记录', 'group' => 'finance', 'icon' => '🆘', 'display_field' => 'contribution_date',
+        'note' => '这些记录会在薪资档案开启"需要计算 EIS"之后，随发薪记录自动生成，通常不用手动新增——想看某一笔的详细金额，点进去看就好。',
+        'fields' => [
+            'salary_payment_id'     => ['type' => 'fk', 'label' => '关联发薪记录 (手动额外供款可留空)', 'fk_resource' => 'salary_payments'],
+            'contribution_date'     => ['type' => 'date', 'label' => '供款日期', 'required' => true, 'default_today' => true],
+            'employee_contribution' => ['type' => 'decimal', 'label' => '员工供款', 'default' => 0],
+            'employer_contribution' => ['type' => 'decimal', 'label' => '雇主供款', 'default' => 0],
+            'notes'                 => ['type' => 'text', 'label' => '备注'],
         ],
         'filters' => [
             ['field' => 'contribution_date', 'type' => 'month'],
@@ -432,12 +482,12 @@ $config = [
             'phone'             => ['type' => 'text', 'label' => '电话', 'placeholder' => '01X-XXXXXXX'],
             'email'             => ['type' => 'text', 'label' => '邮箱', 'placeholder' => 'name@example.com'],
             'notes'             => ['type' => 'textarea', 'label' => '备注/礼物想法', 'placeholder' => '喜欢的东西、上次聊到的话题...'],
-            'tags'              => ['type' => 'tags', 'label' => '标签 (逗号分隔，如：大学朋友, 同事)', 'placeholder' => '大学朋友, 同事'],
+            'tag_id'            => ['type' => 'fk', 'label' => '标签 (选填)', 'fk_resource' => 'tags', 'fk_filter' => ['module' => 'contact']],
             'last_contact_date' => ['type' => 'date', 'label' => '上次联系日期'],
         ],
         'filters' => [
             ['field' => 'name', 'type' => 'text_search'],
-            ['field' => 'tags', 'type' => 'tag_search'],
+            ['field' => 'tag_id', 'type' => 'fk_select'],
         ],
     ],
 
@@ -603,12 +653,8 @@ $config = [
         'label' => '通用提醒', 'group' => 'system', 'icon' => '⏰', 'display_field' => 'message',
         'note' => '提醒时间只需要填"几点"，日期系统自动算 (新增时：这个时间点今天还没过就是今天，过了就是明天；重复的提醒之后自动照重复规则一直往后推)。勾选"已发送"或者提醒时间过了没处理，只要设置了"重复"，系统会自动把这条提醒排到下一次，不用自己重新建一条。',
         'fields' => [
-            'related_type'    => ['type' => 'select', 'label' => '关联类型', 'required' => true,
-                'options' => ['task' => '任务', 'habit' => '习惯', 'subscription' => '订阅', 'custom' => '自定义']],
-            'related_id'      => ['type' => 'number', 'label' => '关联ID (可留空)',
-                'show_when' => ['field' => 'related_type', 'not' => 'custom']],
-            'related_note'    => ['type' => 'text', 'label' => '自定义说明', 'placeholder' => '这个提醒具体是什么事/关联什么',
-                'show_when' => ['field' => 'related_type', 'value' => 'custom']],
+            'tag_id'          => ['type' => 'fk', 'label' => '标签 (选填)', 'fk_resource' => 'tags', 'fk_filter' => ['module' => 'reminder']],
+            'related_note'    => ['type' => 'text', 'label' => '备注 (选填)', 'placeholder' => '这个提醒具体是什么事/关联什么'],
             'remind_at'       => ['type' => 'time', 'label' => '提醒时间 (几点)', 'required' => true],
             'message'         => ['type' => 'text', 'label' => '提醒内容', 'required' => true, 'placeholder' => '要提醒自己什么事？'],
             'repeat_rule'     => ['type' => 'select', 'label' => '重复', 'default' => 'none',
@@ -623,7 +669,6 @@ $config = [
         ],
         'filters' => [
             ['field' => 'repeat_rule', 'type' => 'select'],
-            ['field' => 'related_type', 'type' => 'select'],
         ],
     ],
 
@@ -658,7 +703,7 @@ $config = [
 foreach ([
     'project_categories', 'projects', 'tasks', 'habits', 'habit_logs', 'inbox_items',
     'categories', 'banks', 'bank_accounts', 'tags', 'salary_profiles', 'salary_payments',
-    'epf_contributions', 'transactions', 'subscriptions', 'bookmarks', 'contacts',
+    'epf_contributions', 'socso_contributions', 'eis_contributions', 'transactions', 'subscriptions', 'bookmarks', 'contacts',
     'journal_entries', 'reminders', 'reports', 'fixed_deposits',
     'daily_metrics', // 虽然不在导航里，但仪表盘的"今日健康"卡片会显示它，一样要隔离
 ] as $r) {

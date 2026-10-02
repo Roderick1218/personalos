@@ -14,24 +14,86 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 自助注册的账号没有真实 email，登入系统本身要求 email 格式，用 username 拼一个
-// 假的、固定规则的 email 出来 (username 全部转小写，跟后端建帐号时的规则要一致)。
-function usernameToEmail(username) {
-  return username.trim().toLowerCase() + '@personalos.local';
+// 2026-10-01: 新账号用真实邮箱注册/登录。旧账号仍是用户名拼假邮箱
+// (@personalos.local / @personalos.app)，登录时若输入不含 @ 的用户名会自动回退。
+const USER_EMAIL_DOMAIN = '@personalos.app';
+const LEGACY_USER_EMAIL_DOMAIN = '@personalos.local';
+
+function looksLikeEmail(value) {
+  return /.+@.+\..+/.test(String(value || '').trim());
+}
+
+function usernameToEmail(username, domain) {
+  return String(username || '').trim().toLowerCase() + (domain || USER_EMAIL_DOMAIN);
+}
+
+function stripEmailDomain(email) {
+  const s = String(email || '').trim();
+  if (/@personalos\.(app|local)$/i.test(s)) return s.replace(/@personalos\.(app|local)$/i, '');
+  return s;
+}
+
+async function signInWithIdentifier(identifier, password) {
+  const raw = String(identifier || '').trim();
+  if (!raw) return { data: null, error: { message: '请填写邮箱' } };
+  if (looksLikeEmail(raw)) {
+    return sb.auth.signInWithPassword({ email: raw.toLowerCase(), password });
+  }
+  let result = await sb.auth.signInWithPassword({ email: usernameToEmail(raw), password });
+  if (result.error) {
+    result = await sb.auth.signInWithPassword({
+      email: usernameToEmail(raw, LEGACY_USER_EMAIL_DOMAIN), password,
+    });
+  }
+  return result;
 }
 
 let META_CACHE = null;
 async function loadMetaConfig() {
   if (META_CACHE) return META_CACHE;
-  const res = await fetch('config_resources.json');
+  // config_resources.json 不像 app.js/supabase_bridge.js 那样有 ?v=xxx 版本号可以手动 bump
+  // (.htaccess 的强制不缓存规则也只套用在 .html/.php，不含 .json) —— 每次改完
+  // config_resources.php 重新产生这份 json，浏览器都可能还在用旧的缓存版本，导致"改了但看起来
+  // 没生效"。这里直接用 cache:'no-store' 让浏览器每次都真的重新问服务器要最新的，
+  // 一劳永逸，不用再靠人記得手动加版本号。
+  const res = await fetch('config_resources.json', { cache: 'no-store' });
   META_CACHE = await res.json();
   return META_CACHE;
 }
 
+function publicUserFrom(profile, email) {
+  const mail = email || '';
+  return {
+    id: profile.id,
+    username: profile.display_name || stripEmailDomain(mail),
+    email: mail,
+    display_name: profile.display_name || stripEmailDomain(mail),
+    role: profile.role,
+  };
+}
+
 async function fetchProfile(userId) {
-  const { data, error } = await sb.from('profiles').select('id, display_name, role').eq('id', userId).single();
+  const { data, error } = await sb.from('profiles').select('id, display_name, email, role').eq('id', userId).maybeSingle();
+  if (data) return data;
+  const { data: inserted } = await sb.from('profiles').insert({ id: userId, display_name: 'User', role: 'user' }).select().single();
+  if (inserted) return inserted;
   if (error) throw error;
-  return data;
+  return { id: userId, display_name: 'User', role: 'user' };
+}
+
+async function requireAdmin() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) throw new Error('请先登录');
+  const profile = await fetchProfile(session.user.id);
+  if (profile.role !== 'admin') throw new Error('只有管理员能做这个操作');
+  return profile;
+}
+
+async function wouldRemoveLastAdmin(targetId) {
+  const { data: admins, error } = await sb.from('profiles').select('id').eq('role', 'admin');
+  if (error) throw error;
+  const remaining = (admins || []).filter(a => a.id !== targetId);
+  return remaining.length === 0;
 }
 
 // 把旧版 filters (两种格式: {field: value} 或 [{field, op, value}, ...]) 套用到
@@ -151,6 +213,8 @@ async function syncSalaryPayment(paymentId) {
       await sb.from('salary_payments').update({ transaction_id: null }).eq('id', paymentId);
     }
     await sb.from('epf_contributions').delete().eq('salary_payment_id', paymentId);
+    await sb.from('socso_contributions').delete().eq('salary_payment_id', paymentId);
+    await sb.from('eis_contributions').delete().eq('salary_payment_id', paymentId);
     return;
   }
 
@@ -194,6 +258,30 @@ async function syncSalaryPayment(paymentId) {
   } else if (existingRow) {
     await sb.from('epf_contributions').delete().eq('id', existingRow.id);
   }
+
+  await syncSimpleContribution('socso_contributions', sp, paymentId, sp.employee_socso_amount, sp.employer_socso_amount);
+  await syncSimpleContribution('eis_contributions', sp, paymentId, sp.employee_eis_amount, sp.employer_eis_amount);
+}
+
+// SOCSO/EIS 供款记录不像 EPF 有 Akaun 三户口要拆分，就是单纯"员工供款 + 雇主供款"两个数字，
+// 跟 epf_contributions 那段一样按 salary_payment_id 当 upsert key，金额为 0 就当作没开启，删掉这笔。
+async function syncSimpleContribution(table, sp, paymentId, employeeAmount, employerAmount) {
+  const total = Number(employeeAmount || 0) + Number(employerAmount || 0);
+  const { data: existingRow } = await sb.from(table).select('id').eq('salary_payment_id', paymentId).maybeSingle();
+  if (total > 0) {
+    if (existingRow) {
+      await sb.from(table).update({
+        contribution_date: sp.payment_date, employee_contribution: employeeAmount, employer_contribution: employerAmount,
+      }).eq('id', existingRow.id);
+    } else {
+      await sb.from(table).insert({
+        user_id: sp.user_id, salary_payment_id: paymentId, contribution_date: sp.payment_date,
+        employee_contribution: employeeAmount, employer_contribution: employerAmount,
+      });
+    }
+  } else if (existingRow) {
+    await sb.from(table).delete().eq('id', existingRow.id);
+  }
 }
 
 async function autoGenerateDueSalaryPayments(userId) {
@@ -201,6 +289,9 @@ async function autoGenerateDueSalaryPayments(userId) {
   const today = todayStr();
   const monthStart = today.slice(0, 7) + '-01';
   const daysInMonth = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).getUTCDate();
+  // 有些公司发薪日虽然是这个月，但按比例算基本薪资时是拿"上个月"的天数当分母，不是这个月的
+  // (跟发薪日对齐的周期本来就常常横跨月份，各家公司算法不完全一样，让每个薪资档案自己选)。
+  const daysInPrevMonth = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, 0)).getUTCDate();
   const periodLabel = today.slice(0, 7);
 
   const { data: profiles } = await sb.from('salary_profiles').select('*')
@@ -230,20 +321,38 @@ async function autoGenerateDueSalaryPayments(userId) {
     let basicSalary = Number(p.basic_salary);
     if (!isFullMonth) {
       const daysWorked = daysBetween(periodStart, periodEnd) + 1;
-      basicSalary = Math.round(basicSalary * daysWorked / daysInMonth * 100) / 100;
+      const proDivisor = p.prorate_basis === 'previous_month' ? daysInPrevMonth : daysInMonth;
+      basicSalary = Math.round(basicSalary * daysWorked / proDivisor * 100) / 100;
     }
-    const empPct = Number(p.employee_epf_percent), emprPct = Number(p.employer_epf_percent);
-    const empAmt = Math.round(basicSalary * empPct / 100 * 100) / 100;
-    const emprAmt = Math.round(basicSalary * emprPct / 100 * 100) / 100;
-    const netSalary = Math.round((basicSalary - empAmt) * 100) / 100;
+    const enableEpf = p.enable_epf !== false; // 旧资料没这个栏位时预设当作 true (维持原本一直都有算 EPF 的行为)
+    const enableSocso = p.enable_socso === true;
+    const empEpfPct = enableEpf ? Number(p.employee_epf_percent) : 0;
+    const emprEpfPct = enableEpf ? Number(p.employer_epf_percent) : 0;
+    const empEpfAmt = enableEpf ? Math.round(basicSalary * empEpfPct / 100 * 100) / 100 : 0;
+    const emprEpfAmt = enableEpf ? Math.round(basicSalary * emprEpfPct / 100 * 100) / 100 : 0;
+    const empSocsoPct = enableSocso ? Number(p.employee_socso_percent) : 0;
+    const emprSocsoPct = enableSocso ? Number(p.employer_socso_percent) : 0;
+    const empSocsoAmt = enableSocso ? Math.round(basicSalary * empSocsoPct / 100 * 100) / 100 : 0;
+    const emprSocsoAmt = enableSocso ? Math.round(basicSalary * emprSocsoPct / 100 * 100) / 100 : 0;
+    const enableEis = p.enable_eis === true;
+    const empEisPct = enableEis ? Number(p.employee_eis_percent) : 0;
+    const emprEisPct = enableEis ? Number(p.employer_eis_percent) : 0;
+    const empEisAmt = enableEis ? Math.round(basicSalary * empEisPct / 100 * 100) / 100 : 0;
+    const emprEisAmt = enableEis ? Math.round(basicSalary * emprEisPct / 100 * 100) / 100 : 0;
+    // SOCSO/EIS 员工那一份也是从实收里扣的 (跟 EPF 员工那份一样，都会让到手的钱变少)
+    const netSalary = Math.round((basicSalary - empEpfAmt - empSocsoAmt - empEisAmt) * 100) / 100;
     const notes = `系统根据薪资档案自动生成 (${new Date().toISOString().slice(0, 16).replace('T', ' ')})。如这个月有花红/津贴等额外收入，可以编辑这笔补上。`;
 
     const { data: ins } = await sb.from('salary_payments').insert({
       user_id: userId, salary_profile_id: p.id, payment_date: paymentDate, period_label: periodLabel,
       period_start: isFullMonth ? null : periodStart, period_end: isFullMonth ? null : periodEnd,
-      basic_salary: basicSalary, employee_epf_percent: empPct, employee_epf_amount: empAmt,
-      employer_epf_percent: emprPct, employer_epf_amount: emprAmt, net_salary: netSalary,
-      bank_account_id: p.bank_account_id, status: 'paid', notes,
+      basic_salary: basicSalary, employee_epf_percent: empEpfPct, employee_epf_amount: empEpfAmt,
+      employer_epf_percent: emprEpfPct, employer_epf_amount: emprEpfAmt,
+      employee_socso_percent: empSocsoPct, employee_socso_amount: empSocsoAmt,
+      employer_socso_percent: emprSocsoPct, employer_socso_amount: emprSocsoAmt,
+      employee_eis_percent: empEisPct, employee_eis_amount: empEisAmt,
+      employer_eis_percent: emprEisPct, employer_eis_amount: emprEisAmt,
+      net_salary: netSalary, bank_account_id: p.bank_account_id, status: 'paid', notes,
     }).select().single();
     await syncSalaryPayment(ins.id);
     generated.push({ salary_payment_id: ins.id, company_name: p.company_name, period_label: periodLabel, net_salary: netSalary });
@@ -304,6 +413,13 @@ function nextReminderTime(fromDateTime, rule, interval, unit) {
 
 // reminders 特殊规则: 表单只填"几点" (HH:MM)，这里自动算好拼回完整的 remind_at。
 // 新增: 这个点今天还没过就用今天，过了就用明天。编辑: 保留原本这条记录的日期，只换时间。
+//
+// 2026-09-29 修复: 之前拼出来的字串没带时区 (比如 "2026-09-29 15:56:00")，Supabase/Postgres
+// 收到这种没时区标示的字串，会当作 UTC 时间存——用户在马来西亚时间选的"15:56"，实际存进去、
+// 之后触发的时间会变成 UTC 15:56 = 马来西亚时间 23:56，整整晚了 8 小时触发，用户设的提醒
+// 因此"感觉上没反应"。这里在最终字串明确加上 "+08:00" (马来西亚时区)，Postgres 才会正确
+// 换算成对应的 UTC 时刻存起来。"今天过了没"这个判断也要用同样明确带时区的方式比，
+// 不能直接拿马来西亚时钟数字去跟 UTC 的 now 比字串大小 (两边单位不一样，比了也不准)。
 async function applyReminderTimeRule(resource, action, id, data) {
   if (resource !== 'reminders' || !data || !/^\d{2}:\d{2}$/.test(String(data.remind_at || ''))) return data;
   const time = data.remind_at;
@@ -313,10 +429,10 @@ async function applyReminderTimeRule(resource, action, id, data) {
     datePart = ex ? ex.remind_at.slice(0, 10) : todayStr();
   } else {
     datePart = todayStr();
-    const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    if (`${datePart} ${time}:00` <= nowStr) datePart = addDays(datePart, 1);
+    const candidateMs = new Date(`${datePart}T${time}:00+08:00`).getTime();
+    if (candidateMs <= Date.now()) datePart = addDays(datePart, 1);
   }
-  return { ...data, remind_at: `${datePart} ${time}:00` };
+  return { ...data, remind_at: `${datePart} ${time}:00+08:00` };
 }
 
 async function maybeAdvanceRecurringReminder(id) {
@@ -349,6 +465,30 @@ async function syncFixedDepositOpen(fdId) {
     bank_account_id: fd.source_account_id, description: desc, currency: 'MYR',
   }).select().single();
   await sb.from('fixed_deposits').update({ opening_transaction_id: txn.id }).eq('id', fdId);
+}
+
+// 编辑既有定存改了本金 (比如追加存入更多钱)，不该悄悄把当初开户那笔历史交易的金额改掉——
+// 那是"那天真的发生过的事"，应该保留。这里改成另外补一笔"差额"交易，日期算今天 (改动发生的这一刻)，
+// 反映"今天又多存了/取回了多少"这个新事实，账户余额才会正确跟着变动。
+async function syncFixedDepositPrincipalChange(fdId, previousPrincipal) {
+  const { data: fd } = await sb.from('fixed_deposits').select('*').eq('id', fdId).maybeSingle();
+  if (!fd || !fd.source_account_id) return;
+  const delta = Math.round((Number(fd.principal) - previousPrincipal) * 100) / 100;
+  if (delta === 0) return;
+  const today = todayStr();
+  if (delta > 0) {
+    await sb.from('transactions').insert({
+      user_id: fd.user_id, type: 'expense', amount: delta, transaction_date: today,
+      bank_account_id: fd.source_account_id,
+      description: `定存追加本金 (RM ${previousPrincipal.toFixed(2)} → RM ${Number(fd.principal).toFixed(2)})`, currency: 'MYR',
+    });
+  } else {
+    await sb.from('transactions').insert({
+      user_id: fd.user_id, type: 'income', amount: Math.abs(delta), transaction_date: today,
+      bank_account_id: fd.source_account_id,
+      description: `定存减少本金退回账户 (RM ${previousPrincipal.toFixed(2)} → RM ${Number(fd.principal).toFixed(2)})`, currency: 'MYR',
+    });
+  }
 }
 
 async function autoGenerateDueFixedDeposits(userId) {
@@ -428,7 +568,9 @@ async function buildDashboard(userId) {
   out.auto_matured_fixed_deposits = fdAuto.matured;
   out.auto_generate_skipped_fixed_deposits = fdAuto.skipped;
 
-  const { data: tasksToday } = await sb.from('tasks').select('*').eq('user_id', userId).or(`status.eq.today,due_date.eq.${today}`).order('priority', { ascending: false }).order('id', { ascending: false });
+  // 2026-09-29: 状态简化成只有 未完成(todo)/已完成(done) 两种，仪表盘改成显示全部未完成的任务
+  // (不再只挑"今天"的)
+  const { data: tasksToday } = await sb.from('tasks').select('*').eq('user_id', userId).eq('status', 'todo').order('priority', { ascending: false }).order('id', { ascending: false });
   out.tasks_today = tasksToday || [];
 
   const { data: habits } = await sb.from('habits').select('*').eq('user_id', userId).eq('is_active', true).order('id');
@@ -500,6 +642,18 @@ async function buildDashboard(userId) {
     employee: epfSum.emp, employer: epfSum.empr, additional: epfSum.add,
     total: epfSum.emp + epfSum.empr + epfSum.add, persaraan: epfSum.persaraan, sejahtera: epfSum.sejahtera, fleksibel: epfSum.fleksibel,
   };
+
+  const { data: socsoRows } = await sb.from('socso_contributions').select('employee_contribution,employer_contribution').eq('user_id', userId);
+  const socsoSum = (socsoRows || []).reduce((acc, r) => ({
+    emp: acc.emp + Number(r.employee_contribution), empr: acc.empr + Number(r.employer_contribution),
+  }), { emp: 0, empr: 0 });
+  out.socso_cumulative = { employee: socsoSum.emp, employer: socsoSum.empr, total: socsoSum.emp + socsoSum.empr };
+
+  const { data: eisRows } = await sb.from('eis_contributions').select('employee_contribution,employer_contribution').eq('user_id', userId);
+  const eisSum = (eisRows || []).reduce((acc, r) => ({
+    emp: acc.emp + Number(r.employee_contribution), empr: acc.empr + Number(r.employer_contribution),
+  }), { emp: 0, empr: 0 });
+  out.eis_cumulative = { employee: eisSum.emp, employer: eisSum.empr, total: eisSum.emp + eisSum.empr };
 
   const { data: metricToday } = await sb.from('daily_metrics').select('*').eq('user_id', userId).eq('metric_date', today).maybeSingle();
   out.metric_today = metricToday;
@@ -666,7 +820,8 @@ function toCsvLine(values) {
 async function exportCsv(resource, filters) {
   const config = await loadMetaConfig();
   const fields = config[resource].fields;
-  let query = sb.from(resource).select('*').order('id', { ascending: false }).limit(5000);
+  const { data: { session } } = await sb.auth.getSession();
+  let query = sb.from(resource).select('*').eq('user_id', session.user.id).order('id', { ascending: false }).limit(5000);
   query = applyFilters(query, filters);
   const { data: rows, error } = await query;
   if (error) throw error;
@@ -695,28 +850,12 @@ async function exportCsv(resource, filters) {
 }
 
 async function adminExportFullSql() {
-  const config = await loadMetaConfig();
-  let sql = `-- personal_os 全库备份 (${new Date().toISOString()})，包含所有用户的所有数据\n`;
-  sql += `-- 注意: 这份只含 INSERT (数据本身)，不含建表语句 —— 表结构请用 个人系统_schema_supabase.sql，\n`;
-  sql += `-- 这里假设目标数据库已经照那份文件建好表。\n\n`;
-  for (const [tbl, cfg] of Object.entries(config)) {
-    if (!cfg.user_scoped) continue;
-    const { data: rows, error } = await sb.from(tbl).select('*');
-    if (error) { sql += `-- (跳过 ${tbl}: ${error.message})\n`; continue; }
-    if (!rows || !rows.length) continue;
-    for (const row of rows) {
-      const cols = Object.keys(row);
-      const vals = cols.map(c => {
-        const v = row[c];
-        if (v === null || v === undefined) return 'NULL';
-        if (typeof v === 'object') return "'" + JSON.stringify(v).replace(/'/g, "''") + "'";
-        if (typeof v === 'boolean') return v ? 'true' : 'false';
-        return "'" + String(v).replace(/'/g, "''") + "'";
-      });
-      sql += `INSERT INTO ${tbl} (${cols.join(',')}) VALUES (${vals.join(',')});\n`;
-    }
-    sql += '\n';
-  }
+  await requireAdmin();
+  // 走资料库端函数：不分页、含全部 public 表 + auth.users / identities（密码哈希）。
+  const { data, error } = await sb.rpc('admin_export_full_sql');
+  if (error) throw error;
+  const sql = typeof data === 'string' ? data : (data && data.sql) || '';
+  if (!sql) throw new Error('备份是空的，请稍后再试');
   return { ok: true, sql, filename: 'personal_os_full_backup_' + todayStr().replace(/-/g, '') + '.sql' };
 }
 
@@ -749,22 +888,88 @@ const SupabaseBridge = {
     const { action } = payload;
     try {
       if (action === 'login') {
-        const { data, error } = await sb.auth.signInWithPassword({
-          email: usernameToEmail(payload.username), password: payload.password,
-        });
-        if (error) return { ok: false, error: '用户名或密码不对' };
+        const identifier = payload.email || payload.username;
+        const { data, error } = await signInWithIdentifier(identifier, payload.password);
+        if (error) {
+          const msg = (error.message || '').toLowerCase();
+          if (msg.includes('not confirmed') || msg.includes('email not confirmed')) {
+            return { ok: false, error: '这个邮箱还没完成验证码，请先去注册页输入邮件里的验证码' };
+          }
+          return { ok: false, error: '邮箱或密码不对' };
+        }
+        // 没在网站/App 输过验证码（只点了邮件链接也算未完成注册）时不允许登录
+        if (!data.user.email_confirmed_at && !data.user.confirmed_at) {
+          await sb.auth.signOut();
+          return { ok: false, error: '这个邮箱还没完成验证码，请先去注册页输入邮件里的验证码' };
+        }
         const profile = await fetchProfile(data.user.id);
-        return { ok: true, user: { id: data.user.id, username: payload.username, display_name: profile.display_name, role: profile.role } };
+        return { ok: true, user: publicUserFrom(profile, data.user.email || '') };
       }
       if (action === 'register') {
         if (payload.password.length < 6) return { ok: false, error: '密码至少要 6 位' };
-        const email = usernameToEmail(payload.username);
-        const { data, error } = await sb.auth.signUp({ email, password: payload.password });
-        if (error) return { ok: false, error: error.message.includes('already') ? '这个用户名已经有人用了，换一个' : error.message };
-        const displayName = payload.display_name || payload.username;
-        const { error: profErr } = await sb.from('profiles').insert({ id: data.user.id, display_name: displayName, role: 'user' });
-        if (profErr) return { ok: false, error: profErr.message };
-        return { ok: true, user: { id: data.user.id, username: payload.username, display_name: displayName, role: 'user' } };
+        const email = String(payload.email || '').trim().toLowerCase();
+        const displayName = String(payload.display_name || '').trim();
+        if (!displayName) return { ok: false, error: '请填写名字' };
+        if (!looksLikeEmail(email)) return { ok: false, error: '请填写有效的邮箱' };
+        const { data, error } = await sb.auth.signUp({
+          email,
+          password: payload.password,
+          options: { data: { display_name: displayName } },
+        });
+        if (error) {
+          const msg = error.message || '';
+          if (msg.includes('already') || msg.includes('registered')) return { ok: false, error: '这个邮箱已经有人用了，换一个' };
+          return { ok: false, error: msg };
+        }
+        if (!data.user) return { ok: false, error: '注册失败，请稍后再试' };
+        // 开着 Confirm email 时，Supabase 为了不泄漏"这个邮箱注册过没"，对已存在的邮箱
+        // 也会回一个假的 user，但 identities 是空的。这里挡掉，不然使用者会一直等验证码。
+        if (Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+          return { ok: false, error: '这个邮箱已经有人用了，换一个。若还没验证，请登录页点「还没有账号」再注册一次以重寄验证码。' };
+        }
+        // 即使 Supabase 误开自动登录，也立刻登出：必须在本页输入验证码才算注册成功
+        if (data.session) await sb.auth.signOut();
+        return { ok: true, needs_otp: true, email, message: '验证码已经寄到 ' + email + '。请输入邮件里的全部数字，不要点邮件里的链接。' };
+      }
+
+      // 注册的验证码 (6 位数字)。验证成功就同时完成登入。
+      if (action === 'verify_signup_otp') {
+        const email = String(payload.email || '').trim().toLowerCase();
+        const token = String(payload.token || '').trim();
+        const displayName = String(payload.display_name || '').trim();
+        if (!token) return { ok: false, error: '请填写验证码' };
+        const { data, error } = await sb.auth.verifyOtp({ email, token, type: 'signup' });
+        if (error) return { ok: false, error: '验证码不对或已经过期，请重新获取' };
+        if (!data.user) return { ok: false, error: '验证失败，请重新获取验证码' };
+        if (displayName) {
+          await sb.from('profiles').upsert({ id: data.user.id, display_name: displayName, email, role: 'user' });
+        }
+        const profile = await fetchProfile(data.user.id);
+        return { ok: true, user: publicUserFrom(profile, data.user.email || email) };
+      }
+
+      // 忘记密码第一步：寄验证码。不管这个邮箱存不存在都回一样的讯息，
+      // 免得被人拿来试探"哪些邮箱注册过"。
+      if (action === 'request_password_reset') {
+        const email = String(payload.email || '').trim().toLowerCase();
+        if (!looksLikeEmail(email)) return { ok: false, error: '请填写有效的邮箱' };
+        const { error } = await sb.auth.resetPasswordForEmail(email);
+        if (error) return { ok: false, error: error.message };
+        return { ok: true, message: '如果这个邮箱已经注册过，验证码已经寄出。' };
+      }
+
+      // 忘记密码第二步：验证码 + 新密码，使用者自己完成，不需要管理员插手。
+      if (action === 'reset_password_with_otp') {
+        const email = String(payload.email || '').trim().toLowerCase();
+        const token = String(payload.token || '').trim();
+        const newPassword = String(payload.new_password || '');
+        if (!token) return { ok: false, error: '请填写验证码' };
+        if (newPassword.length < 6) return { ok: false, error: '新密码至少要 6 位' };
+        const { error: vErr } = await sb.auth.verifyOtp({ email, token, type: 'recovery' });
+        if (vErr) return { ok: false, error: '验证码不对或已经过期，请重新获取' };
+        const { error: uErr } = await sb.auth.updateUser({ password: newPassword });
+        if (uErr) return { ok: false, error: uErr.message };
+        return { ok: true };
       }
       if (action === 'logout') {
         await sb.auth.signOut();
@@ -774,8 +979,7 @@ const SupabaseBridge = {
         const { data: { session } } = await sb.auth.getSession();
         if (!session) return { ok: true, user: null };
         const profile = await fetchProfile(session.user.id);
-        const username = session.user.email.replace(/@personalos\.local$/, '');
-        return { ok: true, user: { id: session.user.id, username, display_name: profile.display_name, role: profile.role } };
+        return { ok: true, user: publicUserFrom(profile, session.user.email || '') };
       }
       return { ok: false, error: '未知 action: ' + action };
     } catch (e) {
@@ -804,7 +1008,7 @@ const SupabaseBridge = {
         if (!session) return { ok: false, error: '请先登录' };
         const { error: verifyErr } = await sb.auth.signInWithPassword({ email: session.user.email, password: payload.old_password });
         if (verifyErr) return { ok: false, error: '原密码不对' };
-        if (payload.new_password.length < 4) return { ok: false, error: '新密码至少要 4 位' };
+        if (payload.new_password.length < 6) return { ok: false, error: '新密码至少要 6 位' };
         const { error } = await sb.auth.updateUser({ password: payload.new_password });
         if (error) return { ok: false, error: error.message };
         return { ok: true };
@@ -820,15 +1024,34 @@ const SupabaseBridge = {
         if (resource === 'fixed_deposits') await autoGenerateDueFixedDeposits(userId);
         if (resource === 'reminders') await advanceDueReminders(userId);
 
-        let query = sb.from(resource).select('*').order('id', { ascending: false }).limit(500);
+        // 管理员 RLS 能看到所有人的资料，但日常列表/下拉必须只显示自己的。
+        // 「用户管理」走 admin_list_users，不受这条限制。
+        let query = sb.from(resource).select('*').eq('user_id', userId).order('id', { ascending: false }).limit(500);
         query = applyFilters(query, payload.filters);
         const { data, error } = await query;
         if (error) throw error;
+
+        // 银行账户列表额外算出当前余额 + 打码账号，跟旧版 api.php 的 list 特殊处理一样
+        // (current_balance 是靠交易记录算出来的，不是存在表里的栏位，通用 select('*') 拿不到，
+        // 迁移到 Supabase 时这段一直漏掉，导致这个页面一直显示"期初余额"没变过)。
+        if (resource === 'bank_accounts') {
+          const balances = await computeBankBalances(userId);
+          const byId = {};
+          for (const b of balances) byId[b.id] = b;
+          for (const r of data) {
+            if (byId[r.id]) {
+              r.current_balance = byId[r.id].current_balance;
+              r.account_number_masked = byId[r.id].account_number_masked;
+            }
+          }
+        }
+
         return { ok: true, data };
       }
 
       if (action === 'get') {
-        const { data, error } = await sb.from(resource).select('*').eq('id', payload.id).maybeSingle();
+        const { data: { session } } = await sb.auth.getSession();
+        const { data, error } = await sb.from(resource).select('*').eq('id', payload.id).eq('user_id', session.user.id).maybeSingle();
         if (error) throw error;
         return { ok: true, data };
       }
@@ -855,10 +1078,20 @@ const SupabaseBridge = {
           if (v === undefined) return { ok: false, error: `字段 ${col} 格式不对` };
         }
         updateData = await applyReminderTimeRule(resource, 'update', payload.id, updateData);
-        const { error } = await sb.from(resource).update(updateData).eq('id', payload.id);
+
+        // 编辑定存改本金之前，先记下"改之前"的本金——改完要拿这个跟新值比较才知道差额多少
+        let previousFdPrincipal = null;
+        if (resource === 'fixed_deposits' && 'principal' in updateData) {
+          const { data: existingFd } = await sb.from('fixed_deposits').select('principal').eq('id', payload.id).maybeSingle();
+          previousFdPrincipal = existingFd ? Number(existingFd.principal) : null;
+        }
+
+        const { data: { session: updSession } } = await sb.auth.getSession();
+        const { error } = await sb.from(resource).update(updateData).eq('id', payload.id).eq('user_id', updSession.user.id);
         if (error) throw error;
         if (resource === 'salary_payments') await syncSalaryPayment(payload.id);
         if (resource === 'reminders') await maybeAdvanceRecurringReminder(payload.id);
+        if (resource === 'fixed_deposits' && previousFdPrincipal !== null) await syncFixedDepositPrincipalChange(payload.id, previousFdPrincipal);
         return { ok: true };
       }
 
@@ -884,7 +1117,8 @@ const SupabaseBridge = {
           const { data: sp } = await sb.from('salary_payments').select('transaction_id').eq('id', payload.id).maybeSingle();
           if (sp && sp.transaction_id) await sb.from('transactions').delete().eq('id', sp.transaction_id);
         }
-        const { error } = await sb.from(resource).delete().eq('id', payload.id);
+        const { data: { session: delSession } } = await sb.auth.getSession();
+        const { error } = await sb.from(resource).delete().eq('id', payload.id).eq('user_id', delSession.user.id);
         if (error) throw error;
         return { ok: true };
       }
@@ -910,33 +1144,84 @@ const SupabaseBridge = {
       }
 
       if (action === 'admin_list_users') {
-        const { data, error } = await sb.from('profiles').select('id, display_name, role, created_at').order('created_at');
+        await requireAdmin();
+        const { data, error } = await sb.from('profiles').select('id, display_name, email, role, created_at').order('created_at');
         if (error) throw error;
-        // 前端沿用旧的 {id, username, display_name, role} 形状，username 现在没有独立存，就用 display_name 顶替显示
-        return { ok: true, data: data.map(p => ({ id: p.id, username: p.display_name, display_name: p.display_name, role: p.role, created_at: p.created_at })) };
+        return { ok: true, data: data.map(p => ({ id: p.id, username: p.display_name, display_name: p.display_name, email: p.email || '', role: p.role, created_at: p.created_at })) };
+      }
+
+      if (action === 'admin_create_user') {
+        await requireAdmin();
+        const email = String(payload.email || '').trim().toLowerCase();
+        const password = String(payload.password || '');
+        const displayName = String(payload.display_name || '').trim();
+        const role = payload.role === 'admin' ? 'admin' : 'user';
+        if (!looksLikeEmail(email)) return { ok: false, error: '请填写有效的邮箱' };
+        if (!displayName) return { ok: false, error: '请填写名字' };
+        if (password.length < 6) return { ok: false, error: '密码至少要 6 位' };
+        const { data: { session: adminSession } } = await sb.auth.getSession();
+        const { data, error } = await sb.auth.signUp({
+          email,
+          password,
+          options: { data: { display_name: displayName } },
+        });
+        if (adminSession) {
+          await sb.auth.setSession({ access_token: adminSession.access_token, refresh_token: adminSession.refresh_token });
+        }
+        if (error) {
+          const msg = error.message || '';
+          if (msg.includes('already') || msg.includes('registered')) return { ok: false, error: '这个邮箱已经有人用了' };
+          return { ok: false, error: msg };
+        }
+        if (!data.user) return { ok: false, error: '注册失败，请稍后再试' };
+        const { error: profErr } = await sb.from('profiles').upsert({ id: data.user.id, display_name: displayName, email, role });
+        if (profErr) return { ok: false, error: profErr.message };
+        const extra = data.session ? '' : '（对方需要先到邮箱点确认链接才能登录）';
+        return { ok: true, id: data.user.id, message: extra || undefined };
       }
 
       if (action === 'admin_update_user') {
+        await requireAdmin();
+        const { data: target } = await sb.from('profiles').select('id, role').eq('id', payload.id).maybeSingle();
+        if (!target) return { ok: false, error: '找不到这个用户' };
+        if (payload.role && payload.role !== 'admin' && target.role === 'admin') {
+          const blocked = await wouldRemoveLastAdmin(payload.id);
+          if (blocked) return { ok: false, error: '系统至少要留一个管理员' };
+        }
         const upd = {};
         if (payload.display_name !== undefined) upd.display_name = payload.display_name;
         if (payload.role !== undefined) upd.role = payload.role;
-        const { error } = await sb.from('profiles').update(upd).eq('id', payload.id);
-        if (error) throw error;
+        if (Object.keys(upd).length) {
+          const { error } = await sb.from('profiles').update(upd).eq('id', payload.id);
+          if (error) throw error;
+        }
+        if (payload.email) {
+          const { error } = await sb.rpc('admin_update_user_email', { target_id: payload.id, new_email: payload.email });
+          if (error) return { ok: false, error: error.message };
+        }
         return { ok: true };
       }
 
       if (action === 'admin_delete_user') {
-        // 注意: 这里只删得掉这个人的资料 + profile，删不掉 Supabase Auth 里的登入帐号本身
-        // (那需要 service_role key，只能在 Supabase 自己的后台或 Edge Function 里做，
-        // 前端拿不到那把 key，安全上不能给)。profile 被删掉之后这个人再登入会因为拿不到
-        // profile 资料而失败，效果上等于停用，但账号本身还挂在 Supabase Auth 后台，
-        // 真要连账号本身都清掉，去 Supabase 后台 Authentication 页面手动删。
+        await requireAdmin();
+        const { data: { session } } = await sb.auth.getSession();
+        if (session && session.user.id === payload.id) return { ok: false, error: '不能删除自己' };
+        const { data: target } = await sb.from('profiles').select('id, role').eq('id', payload.id).maybeSingle();
+        if (!target) return { ok: false, error: '找不到这个用户' };
+        if (target.role === 'admin' && await wouldRemoveLastAdmin(payload.id)) {
+          return { ok: false, error: '系统至少要留一个管理员' };
+        }
         const config = await loadMetaConfig();
         for (const [tableName, cfg] of Object.entries(config)) {
           if (!cfg.user_scoped) continue;
-          await sb.from(tableName).delete().eq('user_id', payload.id);
+          const { error } = await sb.from(tableName).delete().eq('user_id', payload.id);
+          if (error) throw error;
         }
-        await sb.from('profiles').delete().eq('id', payload.id);
+        const { error } = await sb.from('profiles').delete().eq('id', payload.id);
+        if (error) throw error;
+        // profiles 删了不够：auth.users 还占着这个邮箱，再注册会说已经有人用。
+        const { error: authErr } = await sb.rpc('admin_delete_auth_user', { target_id: payload.id });
+        if (authErr) return { ok: false, error: authErr.message };
         return { ok: true };
       }
 

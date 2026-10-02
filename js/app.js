@@ -18,10 +18,10 @@ const STATIC_NAV_LINKS = {
 // v2/v3 规范: 只保留这份文档定义的核心模块，其余(库存/旅行/AI助理等)先从导航隐藏，
 // 数据库表和数据都还在，以后要恢复随时把对应 resource 名字加回这个集合就行。
 const CORE_VISIBLE = new Set([
-  'tasks', 'projects', 'project_categories', 'habits', 'habit_logs', 'inbox_items',
+  'tasks', 'projects', 'project_categories', 'habits', 'habit_logs',
   'categories', 'transactions', 'subscriptions', 'journal_entries', 'contacts',
   'bank_accounts', 'banks', 'tags', 'bookmarks',
-  'salary_profiles', 'salary_payments', 'epf_contributions',
+  'salary_profiles', 'salary_payments', 'epf_contributions', 'socso_contributions', 'eis_contributions',
   'reminders', 'reports', 'fixed_deposits',
 ]);
 
@@ -92,6 +92,15 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
+}
+
+// tags 栏位在 Postgres 是 jsonb，Supabase 回传时已经是解析好的数组，不再是 MySQL 时代
+// 那种要自己 JSON.parse() 的字符串——直接 parse 一个已经是数组的东西会抛错。这里统一处理
+// 两种可能的形状 (数组本身 / 还没解析的 JSON 字符串 / 空)，避免到处重复同一段 try/catch。
+function parseTagsField(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch (e) { return []; }
 }
 
 function skeletonCards(n, heightClass = 'skeleton-card') {
@@ -169,7 +178,7 @@ function setupTopbarAndBottomNav() {
 
   // 用 .onclick 赋值而不是 addEventListener —— 这几个元素是页面固定结构 (不像 nav-content 每次
   // boot() 都会整个重新生成)，用户登出又重新登入的话 boot() 会再跑一次，addEventListener 会重复绑定
-  document.getElementById('sidebar-username').textContent = '👤 ' + (CURRENT_USER?.username || '');
+  document.getElementById('sidebar-username').textContent = '👤 ' + (CURRENT_USER?.display_name || CURRENT_USER?.username || '');
   document.getElementById('sidebar-change-pw').onclick = (e) => { e.preventDefault(); openChangePasswordModal(); };
   document.getElementById('sidebar-logout').onclick = (e) => { e.preventDefault(); logout(); };
 }
@@ -231,7 +240,7 @@ async function runGlobalSearch(q, panel) {
   for (const [label, rows] of Object.entries(groups)) {
     html += `<div class="search-group-title">${escapeHtml(label)}</div>`;
     for (const r of rows) {
-      html += `<div class="search-row" onclick='openSearchResult("${r.resource}", ${r.id})'>
+      html += `<div class="search-row" onclick='openSearchResult("${r.resource}", "${r.id}")'>
         <span class="icon">${r.icon}</span>
         <div><div class="title">${escapeHtml(r.title)}</div><div class="sub">${escapeHtml(r.sub)}</div></div>
       </div>`;
@@ -280,7 +289,7 @@ function renderBackupPage() {
     ${CURRENT_USER?.role === 'admin' ? `
     <div class="card" style="max-width:560px; margin-top:16px;">
       <h3>🛡️ 全库备份 (管理员)</h3>
-      <p class="stat-sub">导出整个数据库，包含<strong style="color:var(--danger);">所有账号</strong>的所有数据、外加完整的建表结构，拿去一台全新的 MySQL 直接跑就能整个还原。请妥善保管这份文件，里面有别人的隐私数据。</p>
+      <p class="stat-sub">导出<strong style="color:var(--danger);">所有账号</strong>的登录资料（邮箱、密码哈希、是否已验证）以及全部业务表数据。新项目请先跑 <code>个人系统_schema_supabase.sql</code> 建表和权限，再执行这份 SQL。请妥善保管，里面有别人的隐私数据。</p>
       <button class="btn danger" id="btn-export-full-sql" style="margin-top:12px;">🛡️ 导出全库备份 (SQL)</button>
     </div>` : ''}
   `;
@@ -347,17 +356,16 @@ async function loadAndRenderAdminUsers() {
   listEl.innerHTML = `
     <div class="card">
       <table>
-        <thead><tr><th>用户名</th><th>显示名称</th><th>角色</th><th>创建时间</th><th></th></tr></thead>
+        <thead><tr><th>名字</th><th>角色</th><th>创建时间</th><th></th></tr></thead>
         <tbody>
           ${users.map(u => `
             <tr>
-              <td>${escapeHtml(u.username)}${u.id === CURRENT_USER.id ? ' <span class="stat-sub">(我)</span>' : ''}</td>
-              <td>${escapeHtml(u.display_name || '')}</td>
+              <td>${escapeHtml(u.display_name || u.username || '')}${u.id === CURRENT_USER.id ? ' <span class="stat-sub">(我)</span>' : ''}</td>
               <td><span class="badge" style="background:${u.role === 'admin' ? 'rgba(0,240,255,0.15);color:var(--accent)' : 'rgba(255,255,255,0.08);color:var(--muted)'};">${ROLE_LABEL[u.role] || u.role}</span></td>
               <td class="stat-sub">${u.created_at}</td>
               <td style="text-align:right; white-space:nowrap;">
-                <button class="btn small secondary" onclick='openAdminUserFormById(${u.id})'>编辑</button>
-                <button class="btn small danger" onclick='deleteAdminUser(${u.id})' ${u.id === CURRENT_USER.id ? 'disabled title="不能删除自己"' : ''}>删除</button>
+                <button class="btn small secondary" onclick='openAdminUserFormById("${u.id}")'>编辑</button>
+                <button class="btn small danger" onclick='deleteAdminUser("${u.id}")' ${u.id === CURRENT_USER.id ? 'disabled title="不能删除自己"' : ''}>删除</button>
               </td>
             </tr>
           `).join('')}
@@ -378,23 +386,22 @@ function openAdminUserForm(user) {
     <div class="modal-backdrop" onclick="if(event.target===this) closeForm()">
       <div class="modal">
         <h3>${isEdit ? '编辑用户' : '新增用户'}</h3>
-        <div class="field"><label>用户名</label><input type="text" id="admin-user-username" value="${isEdit ? escapeHtml(user.username) : ''}"></div>
-        <div class="field"><label>显示名称 (选填)</label><input type="text" id="admin-user-display-name" value="${isEdit ? escapeHtml(user.display_name || '') : ''}"></div>
+        <div class="field"><label>名字</label><input type="text" id="admin-user-display-name" value="${isEdit ? escapeHtml(user.display_name || '') : ''}" autocomplete="off"></div>
+        <div class="field"><label>邮箱</label><input type="email" id="admin-user-email" value="${isEdit ? escapeHtml(user.email || '') : ''}" autocomplete="off"></div>
         <div class="field">
           <label>角色</label>
           <select id="admin-user-role">
-            <option value="user" ${isEdit && user.role === 'user' ? 'selected' : ''}>普通用户</option>
+            <option value="user" ${!isEdit || user.role === 'user' ? 'selected' : ''}>普通用户</option>
             <option value="admin" ${isEdit && user.role === 'admin' ? 'selected' : ''}>管理员</option>
           </select>
         </div>
-        <div class="field">
-          <label>${isEdit ? '重设密码 (选填，留空表示不改)' : '密码 (至少 6 位)'}</label>
-          <input type="password" id="admin-user-password" autocomplete="new-password">
-        </div>
+        ${!isEdit
+          ? '<div class="field"><label>密码 (至少 6 位)</label><input type="password" id="admin-user-password" autocomplete="new-password"></div>'
+          : ''}
         <div id="admin-user-form-error" class="login-error"></div>
         <div class="modal-actions">
           <button class="btn secondary" onclick="closeForm()" type="button">取消</button>
-          <button class="btn" onclick="submitAdminUserForm(${isEdit ? user.id : 'null'})" type="button">保存</button>
+          <button class="btn" onclick="submitAdminUserForm(${isEdit ? "'" + user.id + "'" : 'null'})" type="button">保存</button>
         </div>
       </div>
     </div>
@@ -402,22 +409,23 @@ function openAdminUserForm(user) {
 }
 
 async function submitAdminUserForm(id) {
-  const username = document.getElementById('admin-user-username').value.trim();
   const displayName = document.getElementById('admin-user-display-name').value.trim();
   const role = document.getElementById('admin-user-role').value;
-  const password = document.getElementById('admin-user-password').value;
   const errEl = document.getElementById('admin-user-form-error');
   errEl.textContent = '';
-
-  if (!id && password.length < 6) { errEl.textContent = '密码至少要 6 位'; return; }
+  if (!displayName) { errEl.textContent = '请填写名字'; return; }
 
   try {
     if (id) {
-      const data = { id, username, display_name: displayName, role };
-      if (password) data.password = password;
-      await api({ action: 'admin_update_user', ...data });
+      const email = document.getElementById('admin-user-email').value.trim();
+      await api({ action: 'admin_update_user', id, display_name: displayName, role, email });
     } else {
-      await api({ action: 'admin_create_user', username, display_name: displayName, role, password });
+      const email = document.getElementById('admin-user-email').value.trim();
+      const password = document.getElementById('admin-user-password').value;
+      if (!email) { errEl.textContent = '请填写邮箱'; return; }
+      if (password.length < 6) { errEl.textContent = '密码至少要 6 位'; return; }
+      const res = await api({ action: 'admin_create_user', email, display_name: displayName, role, password });
+      if (res && res.message) alert(res.message);
     }
     closeForm();
     await loadAndRenderAdminUsers();
@@ -606,7 +614,11 @@ async function loadAndRenderReportsList() {
 }
 
 function reportCardHtml(r) {
-  const content = (() => { try { return JSON.parse(r.content); } catch (e) { return {}; } })();
+  // r.content 是 Postgres 的 jsonb 栏位，Supabase 回传时已经是解析好的对象/数组，
+  // 不再是 MySQL 时代那种要自己 JSON.parse() 的字符串——parse 一个已经是物件的东西会
+  // 抛错，被下面吞掉后就变成永远显示空的 {}，看起来就像"报表生成了但内容都是空的"。
+  const content = (r.content && typeof r.content === 'object') ? r.content
+    : (() => { try { return JSON.parse(r.content); } catch (e) { return {}; } })();
   const periodLabel = formatReportPeriodLabel(r);
   const net = Number(content.net || 0);
   const netColor = net >= 0 ? '#00FF87' : '#FF3366';
@@ -618,8 +630,8 @@ function reportCardHtml(r) {
           <span class="badge" style="background:#DBEAFE;color:#2563EB;margin-left:8px;">${REPORT_TYPE_LABEL[r.report_type] || r.report_type}</span>
         </div>
         <span>
-          <button class="btn small secondary" onclick='toggleReportDetail(${r.id})'>查看详情</button>
-          <button class="btn small danger" onclick='deleteReport(${r.id})'>删除</button>
+          <button class="btn small secondary" onclick='toggleReportDetail("${r.id}")'>查看详情</button>
+          <button class="btn small danger" onclick='deleteReport("${r.id}")'>删除</button>
         </span>
       </div>
       <div style="display:flex; gap:28px; margin-top:12px; flex-wrap:wrap;">
@@ -729,7 +741,7 @@ function greetingText() {
   return '晚上好';
 }
 
-function buildDonutHtml(breakdown, centerLabel = '本月支出', emptyText = '这个月还没有支出记录') {
+function buildDonutHtml(breakdown, centerLabel = '本月支出', emptyText = '这个月还没有支出记录', legendMode = 'percent') {
   const total = breakdown.reduce((s, c) => s + c.amount, 0);
   if (!total) return `<p class="empty">${escapeHtml(emptyText)}</p>`;
   let cumulative = 0;
@@ -742,7 +754,7 @@ function buildDonutHtml(breakdown, centerLabel = '本月支出', emptyText = '�
   const legend = breakdown.map(c => `
     <div class="donut-legend-item">
       <span class="donut-legend-left"><span class="donut-legend-dot" style="background:${c.color};"></span>${escapeHtml(c.label)}</span>
-      <span class="donut-legend-pct">${((c.amount / total) * 100).toFixed(0)}%</span>
+      <span class="donut-legend-pct">${legendMode === 'amount' ? 'RM ' + c.amount.toFixed(2) : ((c.amount / total) * 100).toFixed(0) + '%'}</span>
     </div>
   `).join('');
   return `
@@ -808,7 +820,7 @@ function buildEpfAccountDonutHtml(epfCumulative) {
     { label: 'Akaun Sejahtera', color: EPF_ACCOUNT_COLOR.sejahtera, amount: Number(c.sejahtera || 0) },
     { label: 'Akaun Fleksibel', color: EPF_ACCOUNT_COLOR.fleksibel, amount: Number(c.fleksibel || 0) },
   ];
-  return buildDonutHtml(breakdown, 'EPF 总额', '还没有 EPF 供款记录');
+  return buildDonutHtml(breakdown, 'EPF 总额', '还没有 EPF 供款记录', 'amount');
 }
 
 async function renderDashboard() {
@@ -819,28 +831,21 @@ async function renderDashboard() {
   const habitRows = d.habits.map(h => `
     <div class="habit-row">
       <label style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1;">
-        <input type="checkbox" ${h.checked_today ? 'checked' : ''} onchange="toggleHabit(${h.id}, this.checked)">
+        <input type="checkbox" ${h.checked_today ? 'checked' : ''} onchange="toggleHabit('${h.id}', this.checked)">
         ${escapeHtml(h.name)}
       </label>
       <span class="stat-sub">${h.frequency === 'daily' ? '每天' : h.frequency === 'weekly' ? '每周' : '自定义'}</span>
     </div>
   `).join('') || '<p class="empty">还没有习惯，去"习惯"页面加一个吧</p>';
 
+  // 2026-09-29: 拿掉左右滑动手势 (跟按钮抢点击，会把"✓ 完成"按钮的点击吃掉)，
+  // 只保留点按钮完成这一种操作方式，用户明确说不要滑动了。
   const taskRows = d.tasks_today.map(t => `
-    <div class="swipe-wrap" data-task-id="${t.id}">
-      <div class="swipe-bg"></div>
-      <div class="swipe-content">
-        <div class="habit-row" style="border-left:4px solid ${PRIORITY_COLOR[t.priority] || '#9CA3AF'};padding-left:10px;">
-          <span>${escapeHtml(t.title)} <span class="badge" style="background:${PRIORITY_COLOR[t.priority]}22;color:${PRIORITY_COLOR[t.priority]};">${PRIORITY_LABEL[t.priority] || t.priority}</span></span>
-          <button class="btn small secondary" onclick="quickCompleteTask(${t.id})">✓ 完成</button>
-        </div>
-      </div>
+    <div class="habit-row" style="border-left:4px solid ${PRIORITY_COLOR[t.priority] || '#9CA3AF'};padding-left:10px;">
+      <span>${escapeHtml(t.title)} <span class="badge" style="background:${PRIORITY_COLOR[t.priority]}22;color:${PRIORITY_COLOR[t.priority]};">${PRIORITY_LABEL[t.priority] || t.priority}</span></span>
+      <button class="btn small secondary" onclick="quickCompleteTask('${t.id}')">✓ 完成</button>
     </div>
-  `).join('') || '<p class="empty">今天没有待办任务</p>';
-
-  const inboxRows = d.inbox_unprocessed.map(i => `
-    <div class="habit-row"><span>${escapeHtml(i.content)}</span></div>
-  `).join('') || '<p class="empty">收件箱是空的</p>';
+  `).join('') || '<p class="empty">没有待办任务</p>';
 
   const recentTxnRows = (d.recent_transactions || []).map(t => `
     <div class="list-row">
@@ -985,6 +990,27 @@ async function renderDashboard() {
       </div>
     </div>
 
+    <div class="dash-row-2">
+      <div class="card">
+        <h3>🛡️ SOCSO 累计供款</h3>
+        <div class="stat-number">RM ${Number(d.socso_cumulative?.total || 0).toFixed(2)}</div>
+        <div class="stat-sub">员工 + 雇主供款总计</div>
+        <div style="margin-top:10px;font-size:13px;color:var(--text-body);">
+          员工 RM ${Number(d.socso_cumulative?.employee || 0).toFixed(2)} ·
+          雇主 RM ${Number(d.socso_cumulative?.employer || 0).toFixed(2)}
+        </div>
+      </div>
+      <div class="card">
+        <h3>🆘 EIS 累计供款</h3>
+        <div class="stat-number">RM ${Number(d.eis_cumulative?.total || 0).toFixed(2)}</div>
+        <div class="stat-sub">员工 + 雇主供款总计</div>
+        <div style="margin-top:10px;font-size:13px;color:var(--text-body);">
+          员工 RM ${Number(d.eis_cumulative?.employee || 0).toFixed(2)} ·
+          雇主 RM ${Number(d.eis_cumulative?.employer || 0).toFixed(2)}
+        </div>
+      </div>
+    </div>
+
     <div class="grid-3">
       <div class="card">
         <h3>📊 支出分类占比 <span class="card-period-badge">本月 ⌄</span></h3>
@@ -1012,7 +1038,7 @@ async function renderDashboard() {
             <span class="quick-action-icon" style="background:var(--icon-green-bg);color:var(--icon-green-fg);">📈</span>
             <span class="quick-action-label">记收入</span>
           </button>
-          <button class="quick-action-btn" onclick='openForm("tasks", null, {status:"today"})'>
+          <button class="quick-action-btn" onclick='openForm("tasks", null, {status:"todo"})'>
             <span class="quick-action-icon" style="background:var(--icon-blue-bg);color:var(--icon-blue-fg);">✅</span>
             <span class="quick-action-label">新任务</span>
           </button>
@@ -1034,7 +1060,7 @@ async function renderDashboard() {
 
     <div class="dash-row-2">
       <div class="card tint-blue interactive">
-        <h3>✅ 今天的任务 <button class="btn icon-only" onclick="toggleQuickAdd('task-add')">+</button></h3>
+        <h3>✅ 待办任务 <button class="btn icon-only" onclick="toggleQuickAdd('task-add')">+</button></h3>
         <div class="quick-add-row" id="task-add">
           <input type="text" id="task-add-input" placeholder="输入任务标题，回车快速添加" onkeydown="if(event.key==='Enter') quickAddTask()">
           <button class="btn small" onclick="quickAddTask()">添加</button>
@@ -1059,26 +1085,7 @@ async function renderDashboard() {
         ${d.journal_today ? `<p>${escapeHtml((d.journal_today.content || '').slice(0, 80))}...</p>` : '<p class="empty">今天还没写</p>'}
       </div>
     </div>
-
-    <div class="dash-row-3">
-      <div class="card">
-        <h3>📥 收件箱待整理 <button class="btn icon-only" onclick="toggleQuickAdd('inbox-add')">+</button></h3>
-        <div class="quick-add-row" id="inbox-add">
-          <input type="text" id="inbox-add-input" placeholder="随手记一句，回车快速添加" onkeydown="if(event.key==='Enter') quickAddInbox()">
-          <button class="btn small" onclick="quickAddInbox()">添加</button>
-        </div>
-        ${inboxRows}
-      </div>
-    </div>
   `;
-
-  el.querySelectorAll('.swipe-wrap[data-task-id]').forEach(wrap => {
-    const taskId = Number(wrap.dataset.taskId);
-    attachSwipe(wrap,
-      () => deleteTaskFromDashboard(taskId),   // swipe left -> delete
-      () => quickCompleteTask(taskId)          // swipe right -> complete
-    );
-  });
 }
 
 function toggleQuickAdd(id) {
@@ -1091,22 +1098,8 @@ async function quickAddTask() {
   const input = document.getElementById('task-add-input');
   const title = input.value.trim();
   if (!title) return;
-  await api({ resource: 'tasks', action: 'create', data: { title, status: 'today', priority: 'medium' } });
+  await api({ resource: 'tasks', action: 'create', data: { title, status: 'todo', priority: 'medium' } });
   input.value = '';
-  renderDashboard();
-}
-
-async function quickAddInbox() {
-  const input = document.getElementById('inbox-add-input');
-  const content = input.value.trim();
-  if (!content) return;
-  await api({ resource: 'inbox_items', action: 'create', data: { content, item_type: 'note' } });
-  input.value = '';
-  renderDashboard();
-}
-
-async function deleteTaskFromDashboard(taskId) {
-  await api({ resource: 'tasks', action: 'delete', id: taskId });
   renderDashboard();
 }
 
@@ -1120,59 +1113,6 @@ async function toggleHabit(habitId, checked) {
 async function quickCompleteTask(taskId) {
   await api({ resource: 'tasks', action: 'update', id: taskId, data: { status: 'done' } });
   renderDashboard();
-}
-
-// ---------------- Swipe gesture (touch: left=delete, right=complete) ----------------
-
-function attachSwipe(wrapEl, onSwipeLeft, onSwipeRight) {
-  const content = wrapEl.querySelector('.swipe-content');
-  const bg = wrapEl.querySelector('.swipe-bg');
-  const THRESHOLD = 80;
-  let startX = 0, dx = 0, dragging = false;
-
-  content.addEventListener('pointerdown', (e) => {
-    dragging = true;
-    startX = e.clientX;
-    content.style.transition = 'none';
-    content.setPointerCapture(e.pointerId);
-  });
-
-  content.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    dx = e.clientX - startX;
-    content.style.transform = `translateX(${dx}px)`;
-    if (dx < -10) {
-      bg.className = 'swipe-bg delete';
-      bg.style.display = 'flex';
-      bg.textContent = '🗑 删除';
-    } else if (dx > 10) {
-      bg.className = 'swipe-bg complete';
-      bg.style.display = 'flex';
-      bg.textContent = '✓ 完成';
-    } else {
-      bg.style.display = 'none';
-    }
-  });
-
-  function endDrag() {
-    if (!dragging) return;
-    dragging = false;
-    content.style.transition = '';
-    if (dx <= -THRESHOLD) {
-      content.style.transform = 'translateX(-100%)';
-      setTimeout(() => onSwipeLeft && onSwipeLeft(), 160);
-    } else if (dx >= THRESHOLD) {
-      content.style.transform = 'translateX(100%)';
-      setTimeout(() => onSwipeRight && onSwipeRight(), 160);
-    } else {
-      content.style.transform = 'translateX(0)';
-      bg.style.display = 'none';
-    }
-    dx = 0;
-  }
-
-  content.addEventListener('pointerup', endDrag);
-  content.addEventListener('pointercancel', endDrag);
 }
 
 // ---------------- Filters (declarative, driven by config_resources.php 'filters') ----------------
@@ -1198,6 +1138,10 @@ function buildFilterBarHtml(resourceName, cfg) {
 
   const controls = filters.map(f => {
     const fieldCfg = cfg.fields[f.field];
+    // 防御: filters 里若残留了一个已经不在 fields 里的字段 (例如 reminders 的 related_type 被
+    // tag_id 取代后忘了同步删掉这条 filter)，下面读 fieldCfg.label/options 会抛 TypeError。
+    // 这个函数在 try/catch 之外被呼叫，一抛错整个页面就会永远停在骨架屏，所以这里直接跳过坏掉的项。
+    if (!fieldCfg) return '';
     if (f.type === 'month') {
       const currentYear = new Date().getFullYear();
       const years = [];
@@ -1220,7 +1164,10 @@ function buildFilterBarHtml(resourceName, cfg) {
       return `<select data-filter="${f.field}" onchange="onFilterChange('${resourceName}')">${opts}</select>`;
     }
     if (f.type === 'fk_select') {
-      const rows = fkCache[fieldCfg.fk_resource] || [];
+      // fk_filter (比如标签要按 module 分类) 之前这里一直没套用，一直显示"这个 resource 的全部行"——
+      // 联系人的标签筛选下拉会看到提醒模块的标签混进来，就是这里漏掉的。
+      const filterKey = fieldCfg.fk_filter ? `${fieldCfg.fk_resource}::${JSON.stringify(fieldCfg.fk_filter)}` : null;
+      const rows = (filterKey ? fkFilteredCache[filterKey] : fkCache[fieldCfg.fk_resource]) || [];
       const displayField = RESOURCES[fieldCfg.fk_resource]?.display_field || 'id';
       const opts = `<option value="">全部${fieldCfg.label}</option>` + rows.map(r =>
         `<option value="${r.id}" ${state[f.field] === String(r.id) ? 'selected' : ''}>${escapeHtml(r[displayField])}</option>`).join('');
@@ -1337,9 +1284,9 @@ function renderItemGrid(resourceName, data) {
           <div class="item-card-footer">
             <span class="badge" style="background:${color}22;color:${color};">${active ? '使用中' : '已停用'}</span>
             <span>
-              <button class="btn small" onclick='markSubscriptionPaid(${s.id})'>✅ 标记已扣费</button>
-              <button class="btn small secondary" onclick='openForm("subscriptions", ${s.id})'>编辑</button>
-              <button class="btn small danger" onclick='deleteRow("subscriptions", ${s.id})'>删除</button>
+              <button class="btn small" onclick='markSubscriptionPaid("${s.id}")'>✅ 标记已扣费</button>
+              <button class="btn small secondary" onclick='openForm("subscriptions", "${s.id}")'>编辑</button>
+              <button class="btn small danger" onclick='deleteRow("subscriptions", "${s.id}")'>删除</button>
             </span>
           </div>
         </div>`;
@@ -1378,8 +1325,8 @@ function renderItemGrid(resourceName, data) {
           <div class="item-card-footer">
             <span class="badge" style="background:${color}22;color:${color};">${statusLabel[fd.status] || fd.status}</span>
             <span>
-              <button class="btn small secondary" onclick='openForm("fixed_deposits", ${fd.id})'>编辑</button>
-              <button class="btn small danger" onclick='deleteRow("fixed_deposits", ${fd.id})'>删除</button>
+              <button class="btn small secondary" onclick='openForm("fixed_deposits", "${fd.id}")'>编辑</button>
+              <button class="btn small danger" onclick='deleteRow("fixed_deposits", "${fd.id}")'>删除</button>
             </span>
           </div>
         </div>`;
@@ -1405,8 +1352,8 @@ function renderItemGrid(resourceName, data) {
             <span>
               <a class="btn small secondary" href="${escapeHtml(l.url)}" target="_blank" rel="noopener">打开</a>
               <button class="btn small secondary" onclick='copyToClipboard("${escapeHtml(l.url)}")'>复制</button>
-              <button class="btn small secondary" onclick='openForm("bookmarks", ${l.id})'>编辑</button>
-              <button class="btn small danger" onclick='deleteRow("bookmarks", ${l.id})'>删除</button>
+              <button class="btn small secondary" onclick='openForm("bookmarks", "${l.id}")'>编辑</button>
+              <button class="btn small danger" onclick='deleteRow("bookmarks", "${l.id}")'>删除</button>
             </span>
           </div>
         </div>`;
@@ -1417,7 +1364,7 @@ function renderItemGrid(resourceName, data) {
   if (resourceName === 'contacts') {
     const cards = data.map(c => {
       const initial = (c.name || '?').trim().charAt(0).toUpperCase();
-      const tags = (() => { try { return (JSON.parse(c.tags || '[]')).join(', '); } catch (e) { return ''; } })();
+      const tags = parseTagsField(c.tags).join(', ');
       return `
         <div class="item-card">
           <div class="item-card-header">
@@ -1433,8 +1380,8 @@ function renderItemGrid(resourceName, data) {
           <div class="item-card-footer">
             <span></span>
             <span>
-              <button class="btn small secondary" onclick='openForm("contacts", ${c.id})'>编辑</button>
-              <button class="btn small danger" onclick='deleteRow("contacts", ${c.id})'>删除</button>
+              <button class="btn small secondary" onclick='openForm("contacts", "${c.id}")'>编辑</button>
+              <button class="btn small danger" onclick='deleteRow("contacts", "${c.id}")'>删除</button>
             </span>
           </div>
         </div>`;
@@ -1458,13 +1405,32 @@ async function renderResourcePage(resourceName) {
     <div class="card">${skeletonLines(5)}</div>
   `;
 
-  // preload fk lists referenced by this resource's fields (needed for both table display + fk_select filter options)
-  const fkFields = Object.entries(cfg.fields).filter(([, f]) => f.type === 'fk');
-  await Promise.all(fkFields.map(([, f]) => loadFk(f.fk_resource)));
-  await Promise.all(fkFields.filter(([, f]) => f.fk_filter).map(([, f]) => loadFkFiltered(f.fk_resource, f.fk_filter)));
+  // preload fk lists referenced by this resource's fields (needed for both table display + fk_select filter options)——
+  // 包一层 try/catch: 之前这几行万一有一个 promise 失败 (比如某个 fk_resource 查询出错)，
+  // 整个 renderResourcePage 就会直接中断在这里，后面"填真正内容"那段永远不会跑到，
+  // 页面就会卡在最上面设的骨架屏 (skeleton) 一直转，看起来像是"刷新不出来"。
+  try {
+    const fkFields = Object.entries(cfg.fields).filter(([, f]) => f.type === 'fk');
+    await Promise.all(fkFields.map(([, f]) => loadFk(f.fk_resource)));
+    await Promise.all(fkFields.filter(([, f]) => f.fk_filter).map(([, f]) => loadFkFiltered(f.fk_resource, f.fk_filter)));
+  } catch (e) {
+    console.error('preload fk lists failed for', resourceName, e);
+  }
 
-  const filtersPayload = buildFiltersPayload(resourceName, cfg);
-  const { data } = await api({ resource: resourceName, action: 'list', filters: filtersPayload });
+  let data;
+  try {
+    const filtersPayload = buildFiltersPayload(resourceName, cfg);
+    ({ data } = await api({ resource: resourceName, action: 'list', filters: filtersPayload }));
+  } catch (e) {
+    console.error('load list failed for', resourceName, e);
+    el.innerHTML = `
+      <div class="toolbar">
+        <div class="page-title" style="margin-bottom:0;">${cfg.icon} ${cfg.label}</div>
+      </div>
+      <div class="card"><p class="empty">加载失败：${escapeHtml(e.message || String(e))}</p></div>
+    `;
+    return;
+  }
   const columns = Object.keys(cfg.fields).filter(c => !cfg.fields[c].hidden);
 
   const extraCols = resourceName === 'bank_accounts' ? ['当前余额'] : [];
@@ -1488,7 +1454,7 @@ async function renderResourcePage(resourceName) {
       } else if (f.type === 'color') {
         return `<td>${val ? `<span class="color-dot" style="background:${escapeHtml(val)};"></span>${escapeHtml(val)}` : ''}</td>`;
       } else if (f.type === 'boolean') val = (val == 1) ? '✅' : '—';
-      else if (f.type === 'tags') { try { val = (JSON.parse(val || '[]')).join(', '); } catch (e) {} }
+      else if (f.type === 'tags') { val = parseTagsField(val).join(', '); }
       else if (f.type === 'select' && f.options && f.options[val]) val = f.options[val];
       else if (val === null) val = '';
       return `<td>${escapeHtml(val)}</td>`;
@@ -1508,8 +1474,8 @@ async function renderResourcePage(resourceName) {
         <td>
           ${linkBtn}
           ${copyBtn}
-          <button class="btn small secondary" onclick='openForm("${resourceName}", ${row.id})'>编辑</button>
-          <button class="btn small danger" onclick='deleteRow("${resourceName}", ${row.id})'>删除</button>
+          <button class="btn small secondary" onclick='openForm("${resourceName}", "${row.id}")'>编辑</button>
+          <button class="btn small danger" onclick='deleteRow("${resourceName}", "${row.id}")'>删除</button>
         </td>
       </tr>`;
   }).join('') || `<tr><td colspan="${columns.length + 1}" class="empty">还没有数据</td></tr>`;
@@ -1646,7 +1612,7 @@ async function openForm(resourceName, id, presetData) {
         <form id="record-form">${fieldsHtml.join('')}</form>
         <div class="modal-actions">
           <button class="btn secondary" onclick="closeForm()" type="button">取消</button>
-          <button class="btn" onclick='submitForm("${resourceName}", ${id ? id : 'null'})' type="button">保存</button>
+          <button class="btn" onclick="submitForm('${resourceName}', ${id ? `'${id}'` : 'null'})" type="button">保存</button>
         </div>
       </div>
     </div>
@@ -1698,6 +1664,14 @@ function setupSalaryPaymentAutofill(existingId) {
   const emprPctInput = form.querySelector('[data-field="employer_epf_percent"]');
   const empAmtInput = form.querySelector('[data-field="employee_epf_amount"]');
   const emprAmtInput = form.querySelector('[data-field="employer_epf_amount"]');
+  const empSocsoPctInput = form.querySelector('[data-field="employee_socso_percent"]');
+  const emprSocsoPctInput = form.querySelector('[data-field="employer_socso_percent"]');
+  const empSocsoAmtInput = form.querySelector('[data-field="employee_socso_amount"]');
+  const emprSocsoAmtInput = form.querySelector('[data-field="employer_socso_amount"]');
+  const empEisPctInput = form.querySelector('[data-field="employee_eis_percent"]');
+  const emprEisPctInput = form.querySelector('[data-field="employer_eis_percent"]');
+  const empEisAmtInput = form.querySelector('[data-field="employee_eis_amount"]');
+  const emprEisAmtInput = form.querySelector('[data-field="employer_eis_amount"]');
   const otherDeductInput = form.querySelector('[data-field="other_deductions"]');
   const netInput = form.querySelector('[data-field="net_salary"]');
   const bankSel = form.querySelector('[data-field="bank_account_id"]');
@@ -1721,13 +1695,15 @@ function setupSalaryPaymentAutofill(existingId) {
       const endDate = new Date(end);
       if (endDate < startDate) { alert('止薪日不能早于起薪日'); return; }
       const daysWorked = Math.round((endDate - startDate) / 86400000) + 1;
-      const daysInMonth = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0).getDate();
       const profile = (fkCache['salary_profiles'] || []).find(p => String(p.id) === profileSel?.value);
+      // 按薪资档案设置的"用哪个月的天数当分母"来算 (有些公司算上个月的天数，不是这个月的)
+      const useMonth = (profile?.prorate_basis === 'previous_month') ? startDate.getMonth() : (startDate.getMonth() + 1);
+      const daysInMonth = new Date(startDate.getFullYear(), useMonth, 0).getDate();
       const fullBasic = profile ? Number(profile.basic_salary) : (parseFloat(basicInput?.value) || 0);
       const prorated = Math.round(fullBasic * daysWorked / daysInMonth * 100) / 100;
       if (basicInput) basicInput.value = prorated.toFixed(2);
       recompute();
-      alert(`这期做了 ${daysWorked} 天，当月共 ${daysInMonth} 天\n基本薪资 RM ${fullBasic.toFixed(2)} × ${daysWorked}/${daysInMonth} = RM ${prorated.toFixed(2)}`);
+      alert(`这期做了 ${daysWorked} 天，${profile?.prorate_basis === 'previous_month' ? '上个月' : '当月'}共 ${daysInMonth} 天\n基本薪资 RM ${fullBasic.toFixed(2)} × ${daysWorked}/${daysInMonth} = RM ${prorated.toFixed(2)}`);
     };
     anchor?.after(btn);
   }
@@ -1737,8 +1713,12 @@ function setupSalaryPaymentAutofill(existingId) {
     const profile = (fkCache['salary_profiles'] || []).find(p => String(p.id) === profileSel.value);
     if (!profile) return;
     if (basicInput) basicInput.value = profile.basic_salary;
-    if (empPctInput) empPctInput.value = profile.employee_epf_percent;
-    if (emprPctInput) emprPctInput.value = profile.employer_epf_percent;
+    if (empPctInput) empPctInput.value = profile.enable_epf === false ? 0 : profile.employee_epf_percent;
+    if (emprPctInput) emprPctInput.value = profile.enable_epf === false ? 0 : profile.employer_epf_percent;
+    if (empSocsoPctInput) empSocsoPctInput.value = profile.enable_socso === true ? profile.employee_socso_percent : 0;
+    if (emprSocsoPctInput) emprSocsoPctInput.value = profile.enable_socso === true ? profile.employer_socso_percent : 0;
+    if (empEisPctInput) empEisPctInput.value = profile.enable_eis === true ? profile.employee_eis_percent : 0;
+    if (emprEisPctInput) emprEisPctInput.value = profile.enable_eis === true ? profile.employer_eis_percent : 0;
     if (bankSel && profile.bank_account_id) bankSel.value = profile.bank_account_id;
     recompute();
   }
@@ -1757,22 +1737,35 @@ function setupSalaryPaymentAutofill(existingId) {
     const otherAdd = parseFloat(otherAddInput?.value) || 0;
     const empPct = parseFloat(empPctInput?.value) || 0;
     const emprPct = parseFloat(emprPctInput?.value) || 0;
+    const empSocsoPct = parseFloat(empSocsoPctInput?.value) || 0;
+    const emprSocsoPct = parseFloat(emprSocsoPctInput?.value) || 0;
+    const empEisPct = parseFloat(empEisPctInput?.value) || 0;
+    const emprEisPct = parseFloat(emprEisPctInput?.value) || 0;
     const otherDeduct = parseFloat(otherDeductInput?.value) || 0;
 
-    // EPF 一般算在基本薪资上 (不含津贴/花红/佣金)，这里只是给个建议值，金额栏位随时可以手动改
+    // EPF/SOCSO/EIS 一般算在基本薪资上 (不含津贴/花红/佣金)，这里只是给个建议值，金额栏位随时可以手动改
     const empAmt = Math.round(basic * empPct / 100 * 100) / 100;
     const emprAmt = Math.round(basic * emprPct / 100 * 100) / 100;
+    const empSocsoAmt = Math.round(basic * empSocsoPct / 100 * 100) / 100;
+    const emprSocsoAmt = Math.round(basic * emprSocsoPct / 100 * 100) / 100;
+    const empEisAmt = Math.round(basic * empEisPct / 100 * 100) / 100;
+    const emprEisAmt = Math.round(basic * emprEisPct / 100 * 100) / 100;
     if (empAmtInput) empAmtInput.value = empAmt.toFixed(2);
     if (emprAmtInput) emprAmtInput.value = emprAmt.toFixed(2);
+    if (empSocsoAmtInput) empSocsoAmtInput.value = empSocsoAmt.toFixed(2);
+    if (emprSocsoAmtInput) emprSocsoAmtInput.value = emprSocsoAmt.toFixed(2);
+    if (empEisAmtInput) empEisAmtInput.value = empEisAmt.toFixed(2);
+    if (emprEisAmtInput) emprEisAmtInput.value = emprEisAmt.toFixed(2);
 
+    // SOCSO/EIS 员工那一份也是从实收里扣的，跟 EPF 员工那份一样会让到手的钱变少
     const gross = basic + allowance + bonus + commission + otherAdd;
-    const net = gross - empAmt - otherDeduct;
+    const net = gross - empAmt - empSocsoAmt - empEisAmt - otherDeduct;
     if (netInput) netInput.value = net.toFixed(2);
   }
 
   // 新增时才自动算 (编辑已有记录时，历史金额不应该被悄悄重新计算，用户要改自己手动改)
   if (!existingId) {
-    [basicInput, allowanceInput, bonusInput, commissionInput, otherAddInput, empPctInput, emprPctInput, otherDeductInput]
+    [basicInput, allowanceInput, bonusInput, commissionInput, otherAddInput, empPctInput, emprPctInput, empSocsoPctInput, emprSocsoPctInput, empEisPctInput, emprEisPctInput, otherDeductInput]
       .filter(Boolean)
       .forEach(el => el.addEventListener('input', recompute));
   }
@@ -1785,8 +1778,11 @@ function setupConditionalFields() {
     const notValue = wrapper.dataset.showWhenNot;
     const controller = document.querySelector(`#record-form [data-field="${controllerField}"]`);
     if (!controller) return;
+    // checkbox (boolean 字段) 的 .value 永远是固定字串 "on"，跟有没有勾选完全无关——
+    // 真正的勾选状态要看 .checked，这里特别处理，不然 show_when 接在 boolean 字段上永远不会生效。
     const update = () => {
-      const show = notValue !== undefined ? (controller.value !== notValue) : (controller.value === requiredValue);
+      const currentValue = controller.type === 'checkbox' ? String(controller.checked) : controller.value;
+      const show = notValue !== undefined ? (currentValue !== notValue) : (currentValue === requiredValue);
       wrapper.style.display = show ? '' : 'none';
     };
     update();
@@ -1846,7 +1842,7 @@ function renderField(key, f, value) {
     case 'textarea':
     case 'json':
       return `<div class="field">${label}
-        <textarea data-field="${key}" ${ph} ${f.type === 'json' ? 'style="font-family:monospace;"' : ''}>${escapeHtml(value)}</textarea></div>`;
+        <textarea data-field="${key}" ${ph} ${f.type === 'json' ? 'style="font-family:monospace;"' : ''}>${escapeHtml(f.type === 'json' && value && typeof value === 'object' ? JSON.stringify(value) : value)}</textarea></div>`;
     case 'select': {
       const opts = Object.entries(f.options).map(([v, l]) =>
         `<option value="${v}" ${String(value) === v ? 'selected' : ''}>${l}</option>`).join('');
@@ -1882,8 +1878,7 @@ function renderField(key, f, value) {
     case 'datetime':
       return `<div class="field">${label}<input type="datetime-local" data-field="${key}" value="${escapeHtml((value||'').replace(' ','T').slice(0,16))}"></div>`;
     case 'tags': {
-      let display = value;
-      try { display = JSON.parse(value || '[]').join(', '); } catch (e) {}
+      const display = parseTagsField(value).join(', ');
       return `<div class="field">${label}<input type="text" placeholder="${f.placeholder ? escapeHtml(f.placeholder) : '逗号分隔，如：读书, 效率'}" data-field="${key}" value="${escapeHtml(display)}"></div>`;
     }
     default:
@@ -1963,50 +1958,133 @@ async function rawApi(payload) {
   return SupabaseBridge.rawCall(payload);
 }
 
-let LOGIN_MODE = 'login'; // 'login' | 'register'
+let LOGIN_MODE = 'login'; // 'login' | 'register' | 'forgot'
+let LOGIN_STEP = 'form';   // 'form' | 'otp'
+let PENDING_DISPLAY_NAME = '';
+let PENDING_EMAIL = '';
+
+const OTP_REQUIRED_HINT = '为确认邮箱真的存在，注册和重设密码都要输入邮箱收到的验证码。';
 
 function setLoginMode(mode) {
   LOGIN_MODE = mode;
+  LOGIN_STEP = 'form';
+  PENDING_DISPLAY_NAME = '';
+  PENDING_EMAIL = '';
   const isRegister = mode === 'register';
+  const isForgot = mode === 'forgot';
+  document.getElementById('login-step-form').style.display = 'block';
+  document.getElementById('login-step-otp').style.display = 'none';
   document.getElementById('login-display-name-field').style.display = isRegister ? 'block' : 'none';
+  document.getElementById('login-password-field').style.display = isForgot ? 'none' : 'block';
   document.getElementById('login-password-confirm-field').style.display = isRegister ? 'block' : 'none';
-  document.getElementById('login-submit-btn').textContent = isRegister ? '注册' : '登录';
+  document.getElementById('login-forgot-row').style.display = isForgot ? 'none' : 'block';
+  document.getElementById('login-newpw-field').style.display = 'none';
+  document.getElementById('login-newpw2-field').style.display = 'none';
+  const nameInput = document.getElementById('login-display-name');
+  if (nameInput) nameInput.required = isRegister;
+  const pwInput = document.getElementById('login-password');
+  if (pwInput) pwInput.required = !isForgot;
+  document.getElementById('login-submit-btn').textContent = isRegister ? '注册' : (isForgot ? '寄送验证码' : '登录');
   document.getElementById('login-mode-toggle').textContent = isRegister ? '已经有账号？点这里登录' : '还没有账号？点这里注册';
+  document.getElementById('login-forgot-row').style.display = isForgot ? 'none' : 'block';
   document.getElementById('login-sub').textContent = isRegister
-    ? '注册一个新账号，跟其他人的数据完全独立'
-    : '多人共用，登录后只看得到自己的东西';
+    ? '填写名字、邮箱和密码，我们会寄一组验证码到你的邮箱'
+    : (isForgot ? '输入你注册时用的邮箱，我们会寄一组验证码给你' : '用邮箱和密码登录');
   document.getElementById('login-error').textContent = '';
-  document.getElementById('login-password').setAttribute('autocomplete', isRegister ? 'new-password' : 'current-password');
+  const otpInput = document.getElementById('login-otp');
+  if (otpInput) otpInput.value = '';
+  if (pwInput) pwInput.setAttribute('autocomplete', isRegister ? 'new-password' : 'current-password');
+}
+
+// 注册流程的第二步：输入邮箱验证码。验证成功就等于完成登入。
+async function submitSignupOtp(errEl) {
+  const token = document.getElementById('login-otp').value.trim();
+  if (!token) { errEl.textContent = '请填写验证码'; return; }
+  const json = await rawApi({ action: 'verify_signup_otp', email: PENDING_EMAIL, token, display_name: PENDING_DISPLAY_NAME });
+  if (!json.ok) { errEl.textContent = json.error || '验证失败'; return; }
+  CURRENT_USER = json.user;
+  hideLoginScreen();
+  boot();
+}
+
+// 忘记密码第二步：验证码 + 新密码，使用者自己完成。
+async function submitResetOtp(errEl) {
+  const token = document.getElementById('login-otp').value.trim();
+  const pw = document.getElementById('login-newpw').value;
+  const pw2 = document.getElementById('login-newpw2').value;
+  if (!token) { errEl.textContent = '请填写验证码'; return; }
+  if (pw.length < 6) { errEl.textContent = '新密码至少要 6 位'; return; }
+  if (pw !== pw2) { errEl.textContent = '两次输入的新密码不一样'; return; }
+  const json = await rawApi({ action: 'reset_password_with_otp', email: PENDING_EMAIL, token, new_password: pw });
+  if (!json.ok) { errEl.textContent = json.error || '重设失败'; return; }
+  alert('密码已经改好，请用新密码登录。');
+  setLoginMode('login');
+  document.getElementById('login-email').value = PENDING_EMAIL;
+  document.getElementById('login-error').textContent = '';
 }
 
 function setupLoginForm() {
   document.getElementById('login-mode-toggle').addEventListener('click', (e) => {
     e.preventDefault();
-    setLoginMode(LOGIN_MODE === 'login' ? 'register' : 'login');
+    setLoginMode(LOGIN_MODE === 'register' ? 'login' : 'register');
+  });
+
+  document.getElementById('login-forgot-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    setLoginMode('forgot');
   });
 
   document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById('login-username').value.trim();
+    const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
     const errEl = document.getElementById('login-error');
     errEl.textContent = '';
 
-    if (LOGIN_MODE === 'register') {
-      const passwordConfirm = document.getElementById('login-password-confirm').value;
-      const displayName = document.getElementById('login-display-name').value.trim();
-      if (password !== passwordConfirm) { errEl.textContent = '两次输入的密码不一样'; return; }
-      const json = await rawApi({ action: 'register', username, password, display_name: displayName });
-      if (!json.ok) { errEl.textContent = json.error || '注册失败'; return; }
-      CURRENT_USER = json.user;
-      document.getElementById('login-password').value = '';
-      document.getElementById('login-password-confirm').value = '';
-      hideLoginScreen();
-      boot();
+    // 已经是第二步：走验证码
+    if (LOGIN_STEP === 'otp') {
+      if (LOGIN_MODE === 'register') await submitSignupOtp(errEl);
+      else await submitResetOtp(errEl);
       return;
     }
 
-    const json = await rawApi({ action: 'login', username, password });
+    if (LOGIN_MODE === 'register') {
+      const passwordConfirm = document.getElementById('login-password-confirm').value;
+      const displayName = document.getElementById('login-display-name').value.trim();
+      if (!displayName) { errEl.textContent = '请填写名字'; return; }
+      if (!email) { errEl.textContent = '请填写邮箱'; return; }
+      if (password !== passwordConfirm) { errEl.textContent = '两次输入的密码不一样'; return; }
+      const json = await rawApi({ action: 'register', email, password, display_name: displayName });
+      if (!json.ok) { errEl.textContent = json.error || '注册失败'; return; }
+      if (json.user) { CURRENT_USER = json.user; hideLoginScreen(); boot(); return; }
+      PENDING_EMAIL = json.email || email;
+      PENDING_DISPLAY_NAME = displayName;
+      LOGIN_STEP = 'otp';
+      document.getElementById('login-step-form').style.display = 'none';
+      document.getElementById('login-step-otp').style.display = 'block';
+      document.getElementById('login-otp-hint').textContent = json.message || ('验证码已经寄到 ' + PENDING_EMAIL);
+      document.getElementById('login-submit-btn').textContent = '验证并开始使用';
+      document.getElementById('login-mode-toggle').textContent = '收不到？点这里回到上一步';
+      return;
+    }
+
+    if (LOGIN_MODE === 'forgot') {
+      if (!email) { errEl.textContent = '请填写邮箱'; return; }
+      const json = await rawApi({ action: 'request_password_reset', email });
+      if (!json.ok) { errEl.textContent = json.error || '寄送失败'; return; }
+      PENDING_EMAIL = email;
+      LOGIN_STEP = 'otp';
+      document.getElementById('login-step-form').style.display = 'none';
+      document.getElementById('login-step-otp').style.display = 'block';
+      document.getElementById('login-newpw-field').style.display = 'block';
+      document.getElementById('login-newpw2-field').style.display = 'block';
+      document.getElementById('login-otp-hint').textContent = json.message || ('如果这个邮箱注册过，验证码已经寄到 ' + PENDING_EMAIL);
+      document.getElementById('login-submit-btn').textContent = '验证并重设密码';
+      document.getElementById('login-mode-toggle').textContent = '收不到？点这里回到上一步';
+      return;
+    }
+
+    const json = await rawApi({ action: 'login', email, password });
     if (!json.ok) { errEl.textContent = json.error || '登录失败'; return; }
     CURRENT_USER = json.user;
     document.getElementById('login-password').value = '';
@@ -2033,7 +2111,7 @@ function openChangePasswordModal() {
       <div class="modal">
         <h3>🔑 修改密码</h3>
         <div class="field"><label>原密码</label><input type="password" id="pw-old"></div>
-        <div class="field"><label>新密码（至少 4 位）</label><input type="password" id="pw-new"></div>
+        <div class="field"><label>新密码（至少 6 位）</label><input type="password" id="pw-new"></div>
         <div class="field"><label>再输入一次新密码</label><input type="password" id="pw-new2"></div>
         <div class="modal-actions">
           <button class="btn secondary" onclick="closeForm()" type="button">取消</button>

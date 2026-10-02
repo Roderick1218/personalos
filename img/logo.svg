@@ -1,0 +1,101 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 1. 深邃赛博夜幕背景 (#090D16) -->
+  <rect width="512" height="512" rx="115" fill="#090D16"/>
+  
+  <!-- 底部柔和光晕与地表网格透视 -->
+  <ellipse cx="256" cy="400" rx="160" ry="40" fill="#06B6D4" opacity="0.15" filter="blur(20px)"/>
+
+  <!-- ==================== 电磁吸附线条 (相互连接的能量链路) ==================== -->
+  <path d="M190 270 L256 230" stroke="#06B6D4" stroke-width="3" stroke-dasharray="4 4" opacity="0.8"/>
+  <path d="M256 305 L322 265" stroke="#06B6D4" stroke-width="3" stroke-dasharray="4 4" opacity="0.8"/>
+  <path d="M190 270 L190 340" stroke="#06B6D4" stroke-width="3" stroke-dasharray="4 4" opacity="0.8"/>
+  
+  <!-- 能量节点微粒 -->
+  <circle cx="190" cy="270" r="4" fill="#38BDF8"/>
+  <circle cx="256" cy="230" r="4" fill="#38BDF8"/>
+  <circle cx="256" cy="305" r="4" fill="#38BDF8"/>
+
+  <!-- ==================== 基底块 1：左下 (健康/心率) ==================== -->
+  <!-- 顶面 -->
+  <path d="M124 290 L190 252 L256 290 L190 328 Z" fill="#1E293B"/>
+  <!-- 左侧面 -->
+  <path d="M124 290 L190 328 L190 378 L124 340 Z" fill="#0F172A"/>
+  <!-- 右侧面 -->
+  <path d="M190 328 L256 290 L256 340 L190 378 Z" fill="#1E293B"/>
+  <!-- 表面心率电磁发光纹理 -->
+  <path d="M150 295 L175 280 L185 300 L195 275 L205 290 L220 280" stroke="#10B981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+
+  <!-- ==================== 基底块 2：左上 (待办/日历) ==================== -->
+  <!-- 顶面 -->
+  <path d="M190 214 L256 176 L322 214 L256 252 Z" fill="#1E293B"/>
+  <!-- 左侧面 -->
+  <path d="M190 214 L256 252 L256 302 L190 264 Z" fill="#0F172A"/>
+  <!-- 右侧面 -->
+  <path d="M256 252 L322 214 L322 264 L256 302 Z" fill="#1B2436"/>
+  <!-- 表面打勾与点阵电路 -->
+  <circle cx="230" cy="210" r="3" fill="#38BDF8"/>
+  <circle cx="256" cy="195" r="3" fill="#38BDF8"/>
+  <path d="M245 228 L255 235 L275 220" stroke="#38BDF8" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- ==================== 基底块 3：右下 (系统/核心OS) ==================== -->
+  <!-- 顶面 -->
+  <path d="M256 290 L322 252 L388 290 L322 328 Z" fill="#1E293B"/>
+  <!-- 左侧面 -->
+  <path d="M256 290 L322 328 L322 378 L256 340 Z" fill="#0F172A"/>
+  <!-- 右侧面 -->
+  <path d="M322 328 L388 290 L388 340 L322 378 Z" fill="#1B2436"/>
+  <!-- 表面OS发光环 -->
+  <ellipse cx="322" cy="290" rx="20" ry="10" stroke="#6366F1" stroke-width="3"/>
+  <circle cx="322" cy="290" r="4" fill="#8B5CF6"/>
+
+  <!-- ==================== 主核心激活块：右上悬浮能核 (财务/主OS) ==================== -->
+  <!-- 悬浮散发出的霓虹暗影光晕 -->
+  <path d="M322 138 L388 100 L454 138 L388 176 Z" fill="#8B5CF6" opacity="0.5" filter="blur(16px)"/>
+  
+  <!-- 向上脱离下落轨迹线 -->
+  <path d="M388 176 L388 230" stroke="#A855F7" stroke-width="3" stroke-dasharray="4 4" opacity="0.6"/>
+
+  <!-- 悬浮能核主体 (向上偏移 36px) -->
+  <g transform="translate(0, -36)">
+    <!-- 顶面 (极致电光高亮) -->
+    <path d="M322 138 L388 100 L454 138 L388 176 Z" fill="url(#core-top)"/>
+    <!-- 左侧面 -->
+    <path d="M322 138 L388 176 L388 226 L322 188 Z" fill="url(#core-left)"/>
+    <!-- 右侧面 -->
+    <path d="M388 176 L454 138 L454 188 L388 226 Z" fill="url(#core-right)"/>
+    
+    <!-- 核心微缩波形/数据流动纹理 -->
+    <path d="M350 145 L375 160 L400 145 L425 158" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="425" cy="158" r="5" fill="#FFFFFF"/>
+    
+    <!-- 边缘高光棱线 -->
+    <path d="M322 138 L388 176 L454 138" stroke="#FFFFFF" stroke-width="2" opacity="0.8"/>
+  </g>
+
+  <!-- 飘逸的赛博能量粒子 -->
+  <circle cx="310" cy="90" r="3" fill="#C084FC"/>
+  <circle cx="440" cy="80" r="4" fill="#38BDF8"/>
+  <circle cx="465" cy="160" r="3" fill="#8B5CF6"/>
+
+  <!-- 渐变定义 -->
+  <defs>
+    <!-- 悬浮核 - 顶面渐变 -->
+    <linearGradient id="core-top" x1="322" y1="100" x2="454" y2="176" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8"/>
+      <stop offset="0.5" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#C084FC"/>
+    </linearGradient>
+    
+    <!-- 悬浮核 - 左侧面渐变 -->
+    <linearGradient id="core-left" x1="322" y1="138" x2="388" y2="226" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0284C7"/>
+      <stop offset="1" stop-color="#6366F1"/>
+    </linearGradient>
+
+    <!-- 悬浮核 - 右侧面渐变 -->
+    <linearGradient id="core-right" x1="388" y1="138" x2="454" y2="226" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+</svg>

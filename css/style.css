@@ -107,7 +107,18 @@ select option {
   color: #e5e7eb;
   white-space: nowrap;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+img.app-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+#login-form img.app-icon { width: 36px; height: 36px; border-radius: 10px; }
 #sidebar-collapse-btn {
   background: rgba(255,255,255,0.08); color: white; border: 1px solid rgba(0,240,255,0.2);
   width: 26px; height: 26px; border-radius: 6px; cursor: pointer;
@@ -406,11 +417,20 @@ tr:hover { background: rgba(0,240,255,0.05); }
 .field label .field-hint { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 2px; }
 .field input[type=text], .field input[type=number], .field input[type=date],
 .field input[type=time], .field input[type=datetime-local], .field input[type=url],
+.field input[type=email], .field input[type=password],
 .field select, .field textarea {
   width: 100%; padding: 9px 10px; border: 1px solid var(--card-border);
   border-radius: 6px; font-size: 14px; font-family: inherit;
   background: rgba(255,255,255,0.04); color: var(--text);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.field input:-webkit-autofill,
+.field input:-webkit-autofill:hover,
+.field input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px #0D1420 inset;
+  caret-color: var(--text);
+  transition: background-color 9999s ease-out;
 }
 .field select {
   background-color: #0D1420; /* select 的下拉面板是系统另外渲染的，半透明背景传不过去，要用实色 */

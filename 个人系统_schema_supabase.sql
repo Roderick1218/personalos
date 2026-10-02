@@ -63,7 +63,7 @@ CREATE TABLE tags (
   user_id UUID NOT NULL REFERENCES auth.users(id) DEFAULT auth.uid(),
   name    VARCHAR(100) NOT NULL,
   color   VARCHAR(20),
-  module  TEXT NOT NULL CHECK (module IN ('finance','task','link'))
+  module  TEXT NOT NULL CHECK (module IN ('finance','task','link','reminder','journal','contact'))
 );
 
 CREATE TABLE tasks (
@@ -73,7 +73,7 @@ CREATE TABLE tasks (
   tag_id       UUID REFERENCES tags(id) ON DELETE SET NULL, -- v3
   title        VARCHAR(255) NOT NULL,
   description  TEXT,
-  status       TEXT NOT NULL DEFAULT 'inbox' CHECK (status IN ('inbox','today','upcoming','done')),
+  status       TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','done')), -- 2026-09-29: 简化成只有未完成/已完成两种 (原本 inbox/today/upcoming/done 四种是旧版)
   priority     TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
   due_date     DATE,
   completed_at TIMESTAMPTZ,
@@ -112,7 +112,8 @@ CREATE TABLE journal_entries (
   entry_date DATE NOT NULL,
   content    TEXT,
   mood       SMALLINT CHECK (mood BETWEEN 1 AND 5),
-  tags       JSONB,
+  tag_id     UUID REFERENCES tags(id) ON DELETE SET NULL, -- 2026-09-30: 原本自由文字 tags (JSONB)
+                                                            -- 改成跟其他模块一样的单一标签外键
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (user_id, entry_date)
@@ -228,6 +229,14 @@ CREATE TABLE salary_profiles (
   bank_account_id       UUID REFERENCES bank_accounts(id) ON DELETE SET NULL,
   employee_epf_percent  NUMERIC(5,2) NOT NULL DEFAULT 11,
   employer_epf_percent  NUMERIC(5,2) NOT NULL DEFAULT 13,
+  prorate_basis         TEXT NOT NULL DEFAULT 'current_month' CHECK (prorate_basis IN ('current_month','previous_month')), -- v4.9.8: 不满整月时，按当月天数还是上个月天数算比例
+  enable_epf            BOOLEAN NOT NULL DEFAULT true, -- v4.9.8: 这个雇主要不要算 EPF
+  enable_socso          BOOLEAN NOT NULL DEFAULT false, -- v4.9.8: 这个雇主要不要算 SOCSO
+  employee_socso_percent NUMERIC(6,3),
+  employer_socso_percent NUMERIC(6,3),
+  enable_eis            BOOLEAN NOT NULL DEFAULT false, -- v4.9.9: 这个雇主要不要算 EIS
+  employee_eis_percent  NUMERIC(6,3),
+  employer_eis_percent  NUMERIC(6,3),
   start_date            DATE NOT NULL,
   end_date              DATE,
   status                TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
@@ -256,6 +265,14 @@ CREATE TABLE salary_payments (
   employee_epf_amount    NUMERIC(12,2) NOT NULL DEFAULT 0,
   employer_epf_percent   NUMERIC(5,2) NOT NULL DEFAULT 0,
   employer_epf_amount    NUMERIC(12,2) NOT NULL DEFAULT 0,
+  employee_socso_percent NUMERIC(6,3),
+  employee_socso_amount  NUMERIC(12,2),
+  employer_socso_percent NUMERIC(6,3),
+  employer_socso_amount  NUMERIC(12,2),
+  employee_eis_percent   NUMERIC(6,3),
+  employee_eis_amount    NUMERIC(12,2),
+  employer_eis_percent   NUMERIC(6,3),
+  employer_eis_amount    NUMERIC(12,2),
   other_deductions       NUMERIC(12,2) NOT NULL DEFAULT 0,
   net_salary             NUMERIC(12,2) NOT NULL, -- 实际入账金额
   bank_account_id        UUID NOT NULL REFERENCES bank_accounts(id) ON DELETE RESTRICT,
@@ -289,6 +306,30 @@ CREATE TABLE epf_contributions (
   fleksibel_amount         NUMERIC(12,2) NOT NULL DEFAULT 0,
   notes                    VARCHAR(255),
   created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- v4.9.9: SOCSO/EIS 供款历史，跟 epf_contributions 同一个套路 (从 salary_payments 自动产生，
+-- salary_payment_id 当 upsert key)，但没有 EPF 那种 Akaun 三户口拆分，就是单纯员工+雇主两个数字。
+CREATE TABLE socso_contributions (
+  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                UUID NOT NULL REFERENCES auth.users(id) DEFAULT auth.uid(),
+  salary_payment_id      UUID REFERENCES salary_payments(id) ON DELETE CASCADE,
+  contribution_date      DATE NOT NULL,
+  employee_contribution  NUMERIC(12,2) NOT NULL DEFAULT 0,
+  employer_contribution  NUMERIC(12,2) NOT NULL DEFAULT 0,
+  notes                  VARCHAR(255),
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE eis_contributions (
+  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                UUID NOT NULL REFERENCES auth.users(id) DEFAULT auth.uid(),
+  salary_payment_id      UUID REFERENCES salary_payments(id) ON DELETE CASCADE,
+  contribution_date      DATE NOT NULL,
+  employee_contribution  NUMERIC(12,2) NOT NULL DEFAULT 0,
+  employer_contribution  NUMERIC(12,2) NOT NULL DEFAULT 0,
+  notes                  VARCHAR(255),
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- v3.3 备注 (重要，迁移到 Supabase 时不要漏掉): 这台机器的 api.php 里有一个
@@ -468,7 +509,8 @@ CREATE TABLE contacts (
   phone             VARCHAR(30),
   email             VARCHAR(255),
   notes             TEXT,
-  tags              JSONB, -- v2: 合并联系人与生日模块的标签 (如 大学朋友/同事)
+  tag_id            UUID REFERENCES tags(id) ON DELETE SET NULL, -- 2026-09-30: 原本自由文字 tags
+                                                                  -- (JSONB) 改成单一标签外键
   last_contact_date DATE,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -644,6 +686,30 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
 
+-- 补回既有账号的 profile: 上面那个 trigger 只对"以后新注册"的账号生效 —— 如果是清空重建
+-- public schema (跑 个人系统_supabase_删除所有表.sql 那份)，auth.users 不会被动到，
+-- 里面本来就有的账号不会触发 INSERT，profiles 会变空，导致明明密码对却登不进去
+-- (登入第一步 auth 验证会过，第二步去 profiles 找不到资料就报错)。这段就是补这个洞:
+-- 每次重跑这份 schema 文件，都会把 auth.users 里"当下已经存在"的账号自动补一行 profile 回去。
+INSERT INTO profiles (id, display_name)
+SELECT id, split_part(email, '@', 1) FROM auth.users
+ON CONFLICT (id) DO NOTHING;
+
+-- 这个系统目前固定 Roderick 是管理员，重建后一律把他设回 admin (其余账号维持默认的 user)。
+UPDATE profiles SET role = 'admin' WHERE id = 'fcab6bfd-882c-45db-b153-dabd2e35de92';
+
+-- is_admin(): 给 RLS policy 判断"目前登入的这个人是不是 admin" 用。
+-- SECURITY DEFINER 表示这个函数用建立者的权限跑 (能读 profiles 判断角色)，
+-- 不受呼叫者当下的 RLS 限制，不然会变成"要先能读 profiles 才能判断能不能读 profiles"的死循环。
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT COALESCE((SELECT role = 'admin' FROM public.profiles WHERE id = auth.uid()), false);
+$$;
+
 CREATE TABLE settings (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id      UUID NOT NULL REFERENCES auth.users(id) DEFAULT auth.uid(),
@@ -660,12 +726,14 @@ CREATE TRIGGER trg_settings_updated_at BEFORE UPDATE ON settings
 -- 应用层实现，不是数据库触发器；迁移到 Supabase 时同样要搬成 Postgres trigger/Edge Function。
 -- v4.6: 网站表单只填"几点" (HH:MM)，日期由 api.php 自动算好拼成完整 remind_at 再存进来
 -- (新增用今天/明天，编辑保留原本的日期只换时间) —— 这段逻辑同样是应用层，不是数据库层面的行为。
--- related_note 是 related_type='custom' 时的自由文字说明，related_id 对 custom 类型没有意义。
+-- 2026-09-30: 原本用 related_type (task/habit/subscription/custom 固定枚举) + related_id
+-- 这一对字段来分类/关联提醒，用户实际用起来发现不好用 (related_id 只是个裸的 UUID 输入框，
+-- 不知道要填什么)，改成跟 transactions/tasks/bookmarks 一样的"标签"分类方式 (tag_id 外键连去
+-- tags 表，tags.module='reminder' 这个分类下的标签)。related_note 保留当成自由备注用。
 CREATE TABLE reminders (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id          UUID NOT NULL REFERENCES auth.users(id) DEFAULT auth.uid(),
-  related_type     TEXT NOT NULL CHECK (related_type IN ('task','habit','subscription','custom')),
-  related_id       UUID,
+  tag_id           UUID REFERENCES tags(id) ON DELETE SET NULL,
   related_note     VARCHAR(255),
   remind_at        TIMESTAMPTZ NOT NULL,
   message          VARCHAR(255) NOT NULL,
@@ -704,6 +772,9 @@ CREATE TABLE recurrence_rules (
 -- exist" 而中断整个脚本 —— 这是之前这份文件真正跑不起来的原因，profiles 单独处理，其余表照旧。
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "own profile only" ON profiles FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+-- admin 账号额外可以看到"所有人"的 profile (自己管理面板/全库备份功能要用)，
+-- 一般账号不受影响 —— 上面那条 policy 还在，两条 policy 是 OR 关系，多加这条只会放宽、不会收紧权限。
+CREATE POLICY "admin can view all" ON profiles FOR SELECT USING (public.is_admin());
 
 DO $$
 DECLARE
@@ -713,6 +784,7 @@ BEGIN
     SELECT unnest(ARRAY[
       'project_categories','projects','tasks','habits','habit_logs','journal_entries','inbox_items',
       'bank_accounts','banks','tags','salary_profiles','salary_payments','epf_contributions',
+      'socso_contributions','eis_contributions',
       'categories','transactions','budgets','subscriptions','daily_metrics','fixed_deposits',
       'exercises','workouts','workout_sets','media_entries','reading_logs',
       'bookmarks','goals','key_results','time_blocks',
@@ -725,6 +797,11 @@ BEGIN
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', t);
     EXECUTE format(
       'CREATE POLICY "own rows only" ON %I FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);',
+      t
+    );
+    -- 同上面 profiles 那条：admin 额外可以看到所有人的资料，一般账号不受影响。
+    EXECUTE format(
+      'CREATE POLICY "admin can view all" ON %I FOR SELECT USING (public.is_admin());',
       t
     );
   END LOOP;
