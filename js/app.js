@@ -280,7 +280,7 @@ function renderBackupPage() {
       <h3>导出我的数据</h3>
       <p class="stat-sub" id="backup-status">${backupStatusHtml(lastBackup)}</p>
       <button class="btn" id="btn-export-sql" style="margin-top:12px;">📦 导出我的数据 (SQL)</button>
-      <p class="stat-sub" style="margin-top:14px;">这个系统现在多人共用，导出的只有你自己账号名下的数据 (不含别人的)，格式是一串 INSERT 语句，不含建表指令。请定期导出并妥善保存到本机以外的地方 (比如网盘)，本地 XAMPP 数据库本身不会自动备份。</p>
+      <p class="stat-sub" style="margin-top:14px;">导出当前账号的数据，格式是一串 INSERT 语句。请定期保存到本机以外的地方（例如网盘）。</p>
     </div>
     <div class="card" style="max-width:560px; margin-top:16px;">
       <h3>各模块 CSV 导出</h3>
@@ -289,7 +289,7 @@ function renderBackupPage() {
     ${CURRENT_USER?.role === 'admin' ? `
     <div class="card" style="max-width:560px; margin-top:16px;">
       <h3>🛡️ 全库备份 (管理员)</h3>
-      <p class="stat-sub">导出<strong style="color:var(--danger);">所有账号</strong>的登录资料（邮箱、密码哈希、是否已验证）以及全部业务表数据。新项目请先跑 <code>个人系统_schema_supabase.sql</code> 建表和权限，再执行这份 SQL。请妥善保管，里面有别人的隐私数据。</p>
+      <p class="stat-sub">导出全部登录资料与业务数据。新项目请先跑 <code>个人系统_schema_supabase.sql</code> 建表和权限，再执行这份 SQL。请妥善保管。</p>
       <button class="btn danger" id="btn-export-full-sql" style="margin-top:12px;">🛡️ 导出全库备份 (SQL)</button>
     </div>` : ''}
   `;

@@ -61,3 +61,8 @@ coverage/
 
 # Test files
 test_output/
+
+# App binaries (GitHub 100MB limit)
+*.apk
+*.zip
+*.aab
