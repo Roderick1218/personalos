@@ -14,6 +14,7 @@ database/
 backup/
 backups/
 !个人系统_supabase_删除所有表.sql
+!Backup Data.sql
 
 # Local personal data
 data/
@@ -51,6 +52,12 @@ build/
 .flutter_tool/
 android/.gradle/
 android/local.properties
+.gradle/
+local.properties
+# Android signing material
+key.properties
+*.jks
+*.keystore
 
 # Node
 node_modules/
@@ -63,6 +70,5 @@ coverage/
 test_output/
 
 # App binaries (GitHub 100MB limit)
-*.apk
 *.zip
 *.aab
