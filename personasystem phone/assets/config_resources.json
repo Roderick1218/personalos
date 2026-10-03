@@ -42,8 +42,8 @@
             },
             "link": {
                 "type": "text",
-                "label": "链接 (如 GitHub \/ 游戏官网)",
-                "placeholder": "https:\/\/..."
+                "label": "链接 (如 GitHub / 游戏官网)",
+                "placeholder": "https://..."
             },
             "status": {
                 "type": "select",
@@ -346,7 +346,7 @@
         "user_scoped": true
     },
     "bank_accounts": {
-        "label": "银行账户\/现金",
+        "label": "银行账户/现金",
         "group": "finance",
         "icon": "🏦",
         "display_field": "nickname",
@@ -364,7 +364,7 @@
             },
             "bank_id": {
                 "type": "fk",
-                "label": "银行 (现金\/电子钱包可留空，没有的银行去\"银行列表\"自己加)",
+                "label": "银行 (现金/电子钱包可留空，没有的银行去\"银行列表\"自己加)",
                 "fk_resource": "banks"
             },
             "nickname": {
@@ -375,7 +375,7 @@
             },
             "account_type": {
                 "type": "text",
-                "label": "账户子类型 (如 Savings\/Current，现金可留空)",
+                "label": "账户子类型 (如 Savings/Current，现金可留空)",
                 "placeholder": "Savings"
             },
             "account_number": {
@@ -440,11 +440,11 @@
         "group": "finance",
         "icon": "💼",
         "display_field": "company_name",
-        "note": "只要填好这里 (公司\/基本月薪\/EPF %\/入账账户\/发薪日)，每个月到了\"发薪日\"系统会自动帮你记一笔发薪记录，不用手动再填一次。如果某个月有花红\/津贴等额外收入，发薪日之后去\"发薪记录\"编辑那一笔加上去就好。",
+        "note": "只要填好这里 (公司/基本月薪/EPF %/入账账户/发薪日)，每个月到了\"发薪日\"系统会自动帮你记一笔发薪记录，不用手动再填一次。如果某个月有花红/津贴等额外收入，发薪日之后去\"发薪记录\"编辑那一笔加上去就好。",
         "fields": {
             "company_name": {
                 "type": "text",
-                "label": "公司\/雇主名称",
+                "label": "公司/雇主名称",
                 "required": true,
                 "placeholder": "如：ABC 有限公司"
             },
@@ -478,7 +478,7 @@
             },
             "prorate_basis": {
                 "type": "select",
-                "label": "入职\/离职不足整月时，按比例算基本薪资要除以哪个月的天数",
+                "label": "入职/离职不足整月时，按比例算基本薪资要除以哪个月的天数",
                 "default": "current_month",
                 "options": {
                     "current_month": "这个月的天数",
@@ -597,7 +597,7 @@
         "group": "finance",
         "icon": "🧾",
         "display_field": "period_label",
-        "note": "每月固定薪资的记录，系统会在\"薪资档案\"设置的发薪日自动生成 (备注会写\"系统自动生成\")，通常不用手动新增。手动新增\/编辑只在这些情况才需要：自由职业\/一次性收入没有档案、某个月有额外花红津贴要补上、或自动生成的数字要调整。",
+        "note": "每月固定薪资的记录，系统会在\"薪资档案\"设置的发薪日自动生成 (备注会写\"系统自动生成\")，通常不用手动新增。手动新增/编辑只在这些情况才需要：自由职业/一次性收入没有档案、某个月有额外花红津贴要补上、或自动生成的数字要调整。",
         "fields": {
             "salary_profile_id": {
                 "type": "fk",
@@ -618,7 +618,7 @@
             },
             "period_start": {
                 "type": "date",
-                "label": "本期起薪日 (入职\/离职当月不足整月时填，用来按比例算基本薪资)"
+                "label": "本期起薪日 (入职/离职当月不足整月时填，用来按比例算基本薪资)"
             },
             "period_end": {
                 "type": "date",
@@ -762,7 +762,7 @@
         "group": "finance",
         "icon": "🏦",
         "display_field": "contribution_date",
-        "note": "这笔供款 (员工+雇主+自愿供款加起来) 会按下面的比例自动分到 Akaun Persaraan \/ Akaun Sejahtera \/ Akaun Fleksibel 三个户口 (2024年新制度)。默认比例是 75% \/ 15% \/ 10%，这是我所知的官方默认值，不是100%保证跟你实际账户一致——如果 KWSP 官方公布的比例跟这个不一样，或者官方有调整过，直接在下面改就好，每一笔都可以各自设置，不会影响其他笔。",
+        "note": "这笔供款 (员工+雇主+自愿供款加起来) 会按下面的比例自动分到 Akaun Persaraan / Akaun Sejahtera / Akaun Fleksibel 三个户口 (2024年新制度)。默认比例是 75% / 15% / 10%，这是我所知的官方默认值，不是100%保证跟你实际账户一致——如果 KWSP 官方公布的比例跟这个不一样，或者官方有调整过，直接在下面改就好，每一笔都可以各自设置，不会影响其他笔。",
         "fields": {
             "salary_payment_id": {
                 "type": "fk",
@@ -920,7 +920,7 @@
         "group": "finance",
         "icon": "💰",
         "display_field": "description",
-        "note": "记一笔账只需要 4 步：① 选\"类型\" (收入\/支出\/转账) ② 填金额 ③ 选账户 (钱从\/到哪个户口或现金) ④ 选日期，其余都选填。\"转账\"是自己账户之间调钱 (比如提现到手上)，不算收入也不算支出。",
+        "note": "记一笔账只需要 4 步：① 选\"类型\" (收入/支出/转账) ② 填金额 ③ 选账户 (钱从/到哪个户口或现金) ④ 选日期，其余都选填。\"转账\"是自己账户之间调钱 (比如提现到手上)，不算收入也不算支出。",
         "fields": {
             "type": {
                 "type": "select",
@@ -946,7 +946,7 @@
             },
             "bank_account_id": {
                 "type": "fk",
-                "label": "账户 (银行\/现金)",
+                "label": "账户 (银行/现金)",
                 "fk_resource": "bank_accounts",
                 "required": true
             },
@@ -1032,7 +1032,7 @@
         "group": "finance",
         "icon": "🏦",
         "display_field": "principal",
-        "note": "\"存入账户\"选填：填了的话，新增这笔定存时会自动从那个账户扣出本金 (记一笔支出)。到期后系统自动处理：选\"转入账户\"会把本金+利息存进你指定的账户；选\"自动展期\"会本金+利息自动开一张新的定存继续存，不会进到银行余额。利息用单利算：本金 × 年利率% × (期限月数\/12)，这是一般定存的算法，不同银行\/产品条款可能不完全一样，请自行跟银行核对。",
+        "note": "\"存入账户\"选填：填了的话，新增这笔定存时会自动从那个账户扣出本金 (记一笔支出)。到期后系统自动处理：选\"转入账户\"会把本金+利息存进你指定的账户；选\"自动展期\"会本金+利息自动开一张新的定存继续存，不会进到银行余额。利息用单利算：本金 × 年利率% × (期限月数/12)，这是一般定存的算法，不同银行/产品条款可能不完全一样，请自行跟银行核对。",
         "fields": {
             "bank_id": {
                 "type": "fk",
@@ -1120,7 +1120,7 @@
         "group": "finance",
         "icon": "🔄",
         "display_field": "name",
-        "note": "填好\"购买\/开始日期\"之后，系统会自动从那天起按周期算出每一期的扣费日，到期就自动生成一笔支出记录，不用每次手动点。",
+        "note": "填好\"购买/开始日期\"之后，系统会自动从那天起按周期算出每一期的扣费日，到期就自动生成一笔支出记录，不用每次手动点。",
         "fields": {
             "name": {
                 "type": "text",
@@ -1142,7 +1142,7 @@
             },
             "start_date": {
                 "type": "date",
-                "label": "购买\/开始日期",
+                "label": "购买/开始日期",
                 "required": true,
                 "default_today": true
             },
@@ -1181,9 +1181,9 @@
         "user_scoped": true
     },
     "daily_metrics": {
-        "label": "健康指标",
-        "group": "A",
-        "icon": "❤️",
+        "label": "步数记录",
+        "group": "personal",
+        "icon": "🚶",
         "display_field": "metric_date",
         "fields": {
             "metric_date": {
@@ -1212,13 +1212,25 @@
             },
             "steps": {
                 "type": "number",
-                "label": "步数"
+                "label": "步数",
+                "readonly": true
             },
             "notes": {
                 "type": "text",
                 "label": "备注"
             }
         },
+        "allow_create": false,
+        "filters": [
+            {
+                "field": "_period",
+                "type": "period"
+            },
+            {
+                "field": "metric_date",
+                "type": "daterange"
+            }
+        ],
         "user_scoped": true
     },
     "exercises": {
@@ -1234,7 +1246,7 @@
             },
             "category": {
                 "type": "text",
-                "label": "分类 (胸\/背\/腿\/有氧)"
+                "label": "分类 (胸/背/腿/有氧)"
             },
             "notes": {
                 "type": "textarea",
@@ -1354,7 +1366,7 @@
             },
             "notes": {
                 "type": "textarea",
-                "label": "摘抄\/笔记"
+                "label": "摘抄/笔记"
             }
         }
     },
@@ -1382,7 +1394,7 @@
             },
             "progress_amount": {
                 "type": "number",
-                "label": "页数\/分钟数"
+                "label": "页数/分钟数"
             }
         }
     },
@@ -1396,7 +1408,7 @@
                 "type": "url",
                 "label": "链接",
                 "required": true,
-                "placeholder": "https:\/\/..."
+                "placeholder": "https://..."
             },
             "title": {
                 "type": "text",
@@ -1431,7 +1443,7 @@
         "user_scoped": true
     },
     "goals": {
-        "label": "目标\/OKR",
+        "label": "目标/OKR",
         "group": "A",
         "icon": "🎯",
         "display_field": "title",
@@ -1505,7 +1517,7 @@
         }
     },
     "time_blocks": {
-        "label": "时间块\/日历",
+        "label": "时间块/日历",
         "group": "A",
         "icon": "🗓️",
         "display_field": "title",
@@ -1581,7 +1593,7 @@
             },
             "notes": {
                 "type": "textarea",
-                "label": "备注\/礼物想法",
+                "label": "备注/礼物想法",
                 "placeholder": "喜欢的东西、上次聊到的话题..."
             },
             "tag_id": {
@@ -1805,7 +1817,7 @@
         }
     },
     "skills": {
-        "label": "学习\/技能",
+        "label": "学习/技能",
         "group": "B",
         "icon": "🧠",
         "display_field": "name",
@@ -1868,7 +1880,7 @@
         "group": "finance",
         "icon": "📑",
         "display_field": "period_start",
-        "note": "选一个期间生成报表：收支\/分类占比\/前5大支出\/薪资\/EPF供款\/订阅扣费\/期末各账户余额，外加习惯打卡次数和日记篇数。同一个期间可以重新生成覆盖最新数字，不会重复堆一份新的。",
+        "note": "选一个期间生成报表：收支/分类占比/前5大支出/薪资/EPF供款/订阅扣费/期末各账户余额，外加习惯打卡次数和日记篇数。同一个期间可以重新生成覆盖最新数字，不会重复堆一份新的。",
         "fields": {
             "report_type": {
                 "type": "select",
@@ -2013,7 +2025,7 @@
             "timezone": {
                 "type": "text",
                 "label": "时区",
-                "default": "Asia\/Kuala_Lumpur"
+                "default": "Asia/Kuala_Lumpur"
             },
             "locale": {
                 "type": "text",
@@ -2061,7 +2073,7 @@
             "related_note": {
                 "type": "text",
                 "label": "备注 (选填)",
-                "placeholder": "这个提醒具体是什么事\/关联什么"
+                "placeholder": "这个提醒具体是什么事/关联什么"
             },
             "remind_at": {
                 "type": "time",

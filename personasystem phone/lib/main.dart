@@ -23,7 +23,7 @@ const Set<String> kCoreVisibleResources = {
   'categories', 'transactions', 'subscriptions', 'journal_entries', 'contacts',
   'bank_accounts', 'banks', 'tags', 'bookmarks',
   'salary_profiles', 'salary_payments', 'epf_contributions', 'socso_contributions', 'eis_contributions',
-  'reminders', 'reports', 'fixed_deposits',
+  'reminders', 'reports', 'fixed_deposits', 'daily_metrics',
 };
 
 // 2026-09-28: 跟网站端一样直接连 Supabase，不再打 api.php —— 不用管这台电脑开不开机，

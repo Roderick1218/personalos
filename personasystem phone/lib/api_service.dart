@@ -144,7 +144,7 @@ class ApiService {
     return buildDashboard(session.user.id);
   }
 
-  static Future<List<dynamic>> list(String resource, {Map<String, dynamic>? filters}) async {
+  static Future<List<dynamic>> list(String resource, {dynamic filters}) async {
     final session = sb.auth.currentSession;
     if (session == null) throw AuthException('请先登录');
     final userId = session.user.id;
@@ -155,7 +155,8 @@ class ApiService {
 
     var query = sb.from(resource).select('*').eq('user_id', userId);
     query = applyFilters(query, filters);
-    final rows = await query.order('id', ascending: false).limit(500);
+    final orderCol = resource == 'daily_metrics' ? 'metric_date' : 'id';
+    final rows = await query.order(orderCol, ascending: false).limit(500);
 
     // 银行账户列表额外算出当前余额 + 打码账号 (跟网站端 supabase_bridge.js 的 list 特殊处理一样，
     // current_balance 是靠交易记录算出来的，不是存在表里的栏位，通用 select('*') 拿不到)。

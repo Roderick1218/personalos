@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../api_service.dart';
 import '../theme.dart';
 import '../step_service.dart';
+import 'resource_list_screen.dart';
 
 const Map<String, Color> _kPriorityColor = {
   'urgent': AppColors.priorityUrgent,
@@ -325,7 +326,15 @@ class DashboardScreenState extends State<DashboardScreen> {
                 Text('睡眠 ${metric['sleep_hours'] ?? '-'} 小时'),
                 Text('心情 ${metric['mood'] ?? '-'} /5'),
               ],
+              const SizedBox(height: 8),
+              const Text('点这里查看步数历史', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
             ],
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ResourceListScreen(resourceName: 'daily_metrics')),
+              );
+            },
           ),
           _tintCard(
             '📓 今日日记',
@@ -455,12 +464,15 @@ class DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _tintCard(String title, Color tint, List<Widget> children, {Future<void> Function(String)? onAdd, String? addHint}) {
+  Widget _tintCard(String title, Color tint, List<Widget> children, {Future<void> Function(String)? onAdd, String? addHint, VoidCallback? onTap}) {
     final controller = onAdd != null ? TextEditingController() : null;
     return Card(
       color: tint,
       margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -506,6 +518,7 @@ class DashboardScreenState extends State<DashboardScreen> {
             ...children,
           ],
         ),
+      ),
       ),
     );
   }

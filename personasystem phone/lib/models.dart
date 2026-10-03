@@ -37,6 +37,7 @@ class FieldConfig {
   final num? min;
   final num? max;
   final bool hidden;
+  final bool readonly;
   final ShowWhen? showWhen;
 
   FieldConfig.fromJson(Map<String, dynamic> json)
@@ -53,9 +54,19 @@ class FieldConfig {
         min = json['min'] as num?,
         max = json['max'] as num?,
         hidden = json['hidden'] == true,
+        readonly = json['readonly'] == true,
         showWhen = json['show_when'] is Map
             ? ShowWhen.fromJson(json['show_when'] as Map<String, dynamic>)
             : null;
+}
+
+class FilterSpec {
+  final String field;
+  final String type;
+
+  FilterSpec.fromJson(Map<String, dynamic> json)
+      : field = json['field'] as String,
+        type = json['type'] as String;
 }
 
 class ResourceConfig {
@@ -65,6 +76,8 @@ class ResourceConfig {
   final String icon;
   final String displayField;
   final Map<String, FieldConfig> fields;
+  final List<FilterSpec> filters;
+  final bool allowCreate;
 
   ResourceConfig.fromJson(this.name, Map<String, dynamic> json)
       : label = json['label'] as String,
@@ -73,5 +86,10 @@ class ResourceConfig {
         displayField = json['display_field'] as String,
         fields = (json['fields'] as Map<String, dynamic>).map(
           (k, v) => MapEntry(k, FieldConfig.fromJson(v as Map<String, dynamic>)),
-        );
+        ),
+        filters = ((json['filters'] as List?) ?? [])
+            .whereType<Map>()
+            .map((e) => FilterSpec.fromJson(e.cast<String, dynamic>()))
+            .toList(),
+        allowCreate = json['allow_create'] != false;
 }

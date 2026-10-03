@@ -22,7 +22,7 @@ const CORE_VISIBLE = new Set([
   'categories', 'transactions', 'subscriptions', 'journal_entries', 'contacts',
   'bank_accounts', 'banks', 'tags', 'bookmarks',
   'salary_profiles', 'salary_payments', 'epf_contributions', 'socso_contributions', 'eis_contributions',
-  'reminders', 'reports', 'fixed_deposits',
+  'reminders', 'reports', 'fixed_deposits', 'daily_metrics',
 ]);
 
 const PRIORITY_COLOR = { urgent: '#ef4444', high: '#ef4444', medium: '#f59e0b', low: '#22c55e' };
@@ -1074,8 +1074,8 @@ async function renderDashboard() {
     </div>
 
     <div class="dash-row-2">
-      <div class="card">
-        <h3>❤️ 今日健康</h3>
+      <div class="card interactive" onclick="location.hash='#daily_metrics'" style="cursor:pointer;">
+        <h3>❤️ 今日健康 <span class="card-period-badge">历史 ›</span></h3>
         ${d.metric_today
           ? `<p>体重 ${d.metric_today.weight_kg ?? '-'} kg · 睡眠 ${d.metric_today.sleep_hours ?? '-'} 小时 · 心情 ${d.metric_today.mood ?? '-'} /5 ${d.metric_today.steps ? '· 步数 ' + d.metric_today.steps : ''}</p>`
           : '<p class="empty">今天还没记录 (手机 App 会自动同步步数)</p>'}
@@ -1125,6 +1125,7 @@ function initFilterState(resourceName, filters) {
   for (const f of filters) {
     if (f.type === 'month') state[f.field] = { year: '', month: '' };
     else if (f.type === 'daterange') state[f.field] = { from: '', to: '' };
+    else if (f.type === 'period') state[f.field] = resourceName === 'daily_metrics' ? 'week' : '';
     else state[f.field] = '';
   }
   FILTER_STATE[resourceName] = state;
@@ -1141,6 +1142,11 @@ function buildFilterBarHtml(resourceName, cfg) {
     // 防御: filters 里若残留了一个已经不在 fields 里的字段 (例如 reminders 的 related_type 被
     // tag_id 取代后忘了同步删掉这条 filter)，下面读 fieldCfg.label/options 会抛 TypeError。
     // 这个函数在 try/catch 之外被呼叫，一抛错整个页面就会永远停在骨架屏，所以这里直接跳过坏掉的项。
+    if (f.type === 'period') {
+      const opts = [['week', '最近一周'], ['month', '本月'], ['', '全部']].map(([v, l]) =>
+        `<option value="${v}" ${state[f.field] === v ? 'selected' : ''}>${l}</option>`).join('');
+      return `<select data-filter="${f.field}" onchange="onFilterChange('${resourceName}')">${opts}</select>`;
+    }
     if (!fieldCfg) return '';
     if (f.type === 'month') {
       const currentYear = new Date().getFullYear();
@@ -1208,7 +1214,13 @@ function buildFiltersPayload(resourceName, cfg) {
   const payload = [];
   for (const f of filters) {
     const val = state[f.field];
-    if (f.type === 'month') {
+    if (f.type === 'period') {
+      const range = periodRange(val);
+      if (range) {
+        payload.push({ field: 'metric_date', op: 'gte', value: range.from });
+        payload.push({ field: 'metric_date', op: 'lte', value: range.to });
+      }
+    } else if (f.type === 'month') {
       if (val.year) {
         const y = val.year, m = val.month;
         if (m) {
@@ -1221,6 +1233,7 @@ function buildFiltersPayload(resourceName, cfg) {
         }
       }
     } else if (f.type === 'daterange') {
+      if (state._period) continue;
       if (val.from) payload.push({ field: f.field, op: 'gte', value: val.from });
       if (val.to) payload.push({ field: f.field, op: 'lte', value: val.to });
     } else if (f.type === 'text_search' || f.type === 'tag_search') {
@@ -1232,6 +1245,66 @@ function buildFiltersPayload(resourceName, cfg) {
   return payload;
 }
 
+
+function localYmd(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+function periodRange(preset) {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  if (preset === 'week') {
+    const from = new Date(now);
+    from.setDate(from.getDate() - 6);
+    return { from: localYmd(from), to: localYmd(now) };
+  }
+  if (preset === 'month') {
+    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { from: localYmd(from), to: localYmd(to) };
+  }
+  return null;
+}
+function fillStepDays(rows, from, to) {
+  const byDate = {};
+  for (const r of rows || []) {
+    const k = String(r.metric_date || '').slice(0, 10);
+    if (!k) continue;
+    byDate[k] = Number(r.steps) || 0;
+  }
+  const out = [];
+  const d = new Date(from + 'T00:00:00');
+  const end = new Date(to + 'T00:00:00');
+  if (isNaN(d) || isNaN(end) || d > end) return rows || [];
+  while (d <= end) {
+    const k = localYmd(d);
+    out.push({ metric_date: k, steps: byDate[k] ?? 0 });
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+function renderStepsChart(data) {
+  let rows = (data || []).slice().sort((a, b) => String(a.metric_date).localeCompare(String(b.metric_date)));
+  const preset = (FILTER_STATE.daily_metrics && FILTER_STATE.daily_metrics._period) || '';
+  const range = periodRange(preset);
+  if (range) rows = fillStepDays(rows, range.from, range.to);
+  if (!rows.length) return '';
+  const max = Math.max(1, ...rows.map(r => Number(r.steps) || 0));
+  const bars = rows.map(r => {
+    const n = Number(r.steps) || 0;
+    const h = Math.round(n / max * 100);
+    const d = String(r.metric_date || '').slice(5);
+    return `<div class="steps-bar" title="${escapeHtml(String(r.metric_date || ''))}: ${n}">
+      <div class="steps-bar-col"><div class="steps-bar-fill" style="height:${Math.max(h, 2)}%"></div></div>
+      <div class="steps-bar-val">${n}</div>
+      <div class="steps-bar-label">${escapeHtml(d)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card"><h3>🚶 步数走势</h3><div class="steps-chart">${bars}</div></div>`;
+}
 function renderCategoryBreakdown(data, cfg) {
   // 仅财务记账用: 按分类汇总支出金额，画一个纯 CSS 横向条形图 (不引入图表库)
   const totals = {};
@@ -1421,6 +1494,9 @@ async function renderResourcePage(resourceName) {
   try {
     const filtersPayload = buildFiltersPayload(resourceName, cfg);
     ({ data } = await api({ resource: resourceName, action: 'list', filters: filtersPayload }));
+    if (resourceName === 'daily_metrics' && Array.isArray(data)) {
+      data.sort((a, b) => String(b.metric_date || '').localeCompare(String(a.metric_date || '')));
+    }
   } catch (e) {
     console.error('load list failed for', resourceName, e);
     el.innerHTML = `
@@ -1482,6 +1558,7 @@ async function renderResourcePage(resourceName) {
 
   const filterBarHtml = buildFilterBarHtml(resourceName, cfg);
   const breakdownHtml = resourceName === 'transactions' ? renderCategoryBreakdown(data, cfg) : '';
+  const stepsChartHtml = resourceName === 'daily_metrics' ? renderStepsChart(data) : '';
   const csvBtn = resourceName === 'transactions'
     ? `<button class="btn secondary" onclick='exportCsv("${resourceName}")'>⬇ 导出 CSV</button>` : '';
 
@@ -1494,11 +1571,12 @@ async function renderResourcePage(resourceName) {
       <div class="page-title" style="margin-bottom:0;">${cfg.icon} ${cfg.label}</div>
       <div style="display:flex;gap:8px;">
         ${csvBtn}
-        <button class="btn" onclick='openForm("${resourceName}", null)'>+ 新增</button>
+        ${cfg.allow_create === false ? '' : `<button class="btn" onclick='openForm("${resourceName}", null)'>+ 新增</button>`}
       </div>
     </div>
     ${cfg.note ? `<div class="resource-note">💡 ${escapeHtml(cfg.note)}</div>` : ''}
     ${filterBarHtml}
+    ${stepsChartHtml}
     ${breakdownHtml}
     ${bodyHtml}
   `;
@@ -1575,6 +1653,7 @@ async function markSubscriptionPaid(id) {
 
 async function openForm(resourceName, id, presetData) {
   const cfg = RESOURCES[resourceName];
+  if (!id && cfg.allow_create === false) return;
   let record = {};
   if (id) {
     const { data } = await api({ resource: resourceName, action: 'get', id });
@@ -1864,7 +1943,7 @@ function renderField(key, f, value) {
         <input type="checkbox" id="f_${key}" data-field="${key}" ${value == 1 || value === true ? 'checked' : ''}>
         <label for="f_${key}">${escapeHtml(f.label)}</label></div>`;
     case 'number':
-      return `<div class="field">${label}<input type="number" ${ph} data-field="${key}" value="${escapeHtml(value)}" ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''}></div>`;
+      return `<div class="field">${label}<input type="number" ${ph} data-field="${key}" value="${escapeHtml(value)}" ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''} ${f.readonly ? 'disabled' : ''}></div>${f.readonly ? '<p class="empty" style="margin-top:-8px;">由 App 根据走路自动记录，不能手动改</p>' : ''}`;
     case 'decimal':
       return `<div class="field">${label}<input type="number" step="0.01" ${ph || 'placeholder="0.00"'} data-field="${key}" value="${escapeHtml(value)}"></div>`;
     case 'date':
@@ -1895,6 +1974,7 @@ async function submitForm(resourceName, id) {
   const form = document.getElementById('record-form');
   const data = {};
   for (const key of Object.keys(cfg.fields)) {
+    if (cfg.fields[key].readonly) continue;
     const f = cfg.fields[key];
     const el = form.querySelector(`[data-field="${key}"]`);
     if (!el) continue;

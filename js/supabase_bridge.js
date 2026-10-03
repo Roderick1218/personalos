@@ -1026,9 +1026,10 @@ const SupabaseBridge = {
 
         // 管理员 RLS 能看到所有人的资料，但日常列表/下拉必须只显示自己的。
         // 「用户管理」走 admin_list_users，不受这条限制。
-        let query = sb.from(resource).select('*').eq('user_id', userId).order('id', { ascending: false }).limit(500);
+        let query = sb.from(resource).select('*').eq('user_id', userId);
         query = applyFilters(query, payload.filters);
-        const { data, error } = await query;
+        const orderCol = resource === 'daily_metrics' ? 'metric_date' : 'id';
+        const { data, error } = await query.order(orderCol, { ascending: false }).limit(500);
         if (error) throw error;
 
         // 银行账户列表额外算出当前余额 + 打码账号，跟旧版 api.php 的 list 特殊处理一样

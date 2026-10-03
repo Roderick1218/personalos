@@ -21,13 +21,77 @@ class ResourceListScreenState extends State<ResourceListScreen> {
   List<dynamic> _rows = [];
   bool _loading = true;
   String? _error;
+  final Map<String, String> _filterValues = {};
 
   ResourceConfig get cfg => AppState.resources[widget.resourceName]!;
 
   @override
   void initState() {
     super.initState();
+    if (widget.resourceName == 'daily_metrics') {
+      _filterValues['_period'] = 'week';
+    }
     reload();
+  }
+
+  String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Map<String, String>? _periodRange(String preset) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (preset == 'week') {
+      final from = today.subtract(const Duration(days: 6));
+      return {'from': _ymd(from), 'to': _ymd(today)};
+    }
+    if (preset == 'month') {
+      final from = DateTime(today.year, today.month, 1);
+      final to = DateTime(today.year, today.month + 1, 0);
+      return {'from': _ymd(from), 'to': _ymd(to)};
+    }
+    return null;
+  }
+
+  List<Map<String, dynamic>> _filtersPayload() {
+    final payload = <Map<String, dynamic>>[];
+    for (final f in cfg.filters) {
+      if (f.type == 'period') {
+        final range = _periodRange(_filterValues[f.field] ?? '');
+        if (range != null) {
+          payload.add({'field': 'metric_date', 'op': 'gte', 'value': range['from']});
+          payload.add({'field': 'metric_date', 'op': 'lte', 'value': range['to']});
+        }
+        continue;
+      }
+      final fieldCfg = cfg.fields[f.field];
+      if (fieldCfg == null) continue;
+      if (f.type == 'month') {
+        final y = _filterValues['${f.field}:year'] ?? '';
+        final m = _filterValues['${f.field}:month'] ?? '';
+        if (y.isEmpty) continue;
+        if (m.isNotEmpty) {
+          final last = DateTime(int.parse(y), int.parse(m) + 1, 0).day;
+          payload.add({'field': f.field, 'op': 'gte', 'value': '$y-${m.padLeft(2, '0')}-01'});
+          payload.add({'field': f.field, 'op': 'lte', 'value': '$y-${m.padLeft(2, '0')}-${last.toString().padLeft(2, '0')}'});
+        } else {
+          payload.add({'field': f.field, 'op': 'gte', 'value': '$y-01-01'});
+          payload.add({'field': f.field, 'op': 'lte', 'value': '$y-12-31'});
+        }
+      } else if (f.type == 'daterange') {
+        if ((_filterValues['_period'] ?? '').isNotEmpty) continue;
+        final from = _filterValues['${f.field}:from'] ?? '';
+        final to = _filterValues['${f.field}:to'] ?? '';
+        if (from.isNotEmpty) payload.add({'field': f.field, 'op': 'gte', 'value': from});
+        if (to.isNotEmpty) payload.add({'field': f.field, 'op': 'lte', 'value': to});
+      } else if (f.type == 'text_search' || f.type == 'tag_search') {
+        final val = _filterValues[f.field] ?? '';
+        if (val.isNotEmpty) payload.add({'field': f.field, 'op': 'like', 'value': val});
+      } else {
+        final val = _filterValues[f.field] ?? '';
+        if (val.isNotEmpty) payload.add({'field': f.field, 'op': 'eq', 'value': val});
+      }
+    }
+    return payload;
   }
 
   Future<void> reload() async {
@@ -41,7 +105,10 @@ class ResourceListScreenState extends State<ResourceListScreen> {
           await AppState.loadFk(f.fkResource!);
         }
       }
-      final rows = await ApiService.list(widget.resourceName);
+      final rows = await ApiService.list(widget.resourceName, filters: _filtersPayload());
+      if (widget.resourceName == 'daily_metrics') {
+        rows.sort((a, b) => b['metric_date'].toString().compareTo(a['metric_date'].toString()));
+      }
       setState(() {
         _rows = rows;
         _loading = false;
@@ -57,8 +124,6 @@ class ResourceListScreenState extends State<ResourceListScreen> {
   Future<void> _delete(String id) async {
     await ApiService.delete(widget.resourceName, id);
     AppState.invalidateFk(widget.resourceName);
-    // 删掉的提醒如果之前已经排过系统闹钟，要一并取消，不然系统到点还是会照排好的时间弹一条
-    // 指向一笔已经不存在的记录 (点开确认画面会找不到资料)。
     if (widget.resourceName == 'reminders') {
       await NotificationService.cancelReminder(id);
     }
@@ -108,13 +173,15 @@ class ResourceListScreenState extends State<ResourceListScreen> {
 
   String _subtitle(Map<String, dynamic> row) {
     final parts = <String>[];
-    // 当前余额是靠交易记录算出来的，不是 config 里的一个表单字段，走通用逻辑显示不出来，
-    // 这里跟网站端 (app.js 的 extraCols) 一样单独补上。
     if (widget.resourceName == 'bank_accounts' && row['current_balance'] != null) {
       parts.add('当前余额 RM ${(row['current_balance'] as num).toStringAsFixed(2)}');
     }
+    if (widget.resourceName == 'daily_metrics' && row['steps'] != null) {
+      parts.add('步数 ${row['steps']}');
+    }
     for (final entry in cfg.fields.entries) {
       if (entry.key == cfg.displayField) continue;
+      if (widget.resourceName == 'daily_metrics' && entry.key == 'steps') continue;
       final f = entry.value;
       if (f.type == 'boolean' || f.type == 'json' || f.type == 'textarea') continue;
       var val = row[entry.key];
@@ -123,21 +190,213 @@ class ResourceListScreenState extends State<ResourceListScreen> {
       if (f.type == 'select' && f.options != null) val = f.options![val.toString()] ?? val;
       if (f.type == 'time' || f.type == 'datetime') val = _formatTimeLike(val.toString());
       parts.add(val.toString());
-      if (parts.length >= 2) break;
+      if (parts.length >= 3) break;
     }
     return parts.join(' · ');
   }
 
-  // 2026-09-29: 之前直接把原始值 (比如 reminders.remind_at 的 "2026-09-29T09:18:00+00:00")
-  // 显示在列表上，用户看到的是 UTC 时间，跟自己选的马来西亚本地时间对不上，会误以为存错了——
-  // 其实数据本身是对的，只是没换算成本地时间显示。这里统一处理:
-  // 带时区/日期的完整时间戳 -> 换算成本地时间显示；纯时间 (无日期，如 time_blocks) -> 只是去掉秒数。
   String _formatTimeLike(String val) {
     if (val.contains('T') || val.contains(' ') || val.contains('+') || val.contains('Z')) {
       final parsed = DateTime.tryParse(val);
       if (parsed != null) return DateFormat('yyyy-MM-dd HH:mm').format(parsed.toLocal());
     }
     return val.length >= 5 ? val.substring(0, 5) : val;
+  }
+
+  Future<void> _pickDate(String key) async {
+    final current = _filterValues[key];
+    DateTime initial = DateTime.now();
+    if (current != null && current.isNotEmpty) {
+      initial = DateTime.tryParse(current) ?? initial;
+    }
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+    setState(() {
+      _filterValues[key] = DateFormat('yyyy-MM-dd').format(picked);
+      _filterValues['_period'] = '';
+    });
+    reload();
+  }
+
+  Widget _filterControl(FilterSpec f) {
+    if (f.type == 'period') {
+      return DropdownButtonFormField<String>(
+        value: (_filterValues[f.field] ?? 'week').isEmpty ? '' : (_filterValues[f.field] ?? 'week'),
+        isExpanded: true,
+        decoration: const InputDecoration(
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        ),
+        items: const [
+          DropdownMenuItem(value: 'week', child: Text('最近一周')),
+          DropdownMenuItem(value: 'month', child: Text('本月')),
+          DropdownMenuItem(value: '', child: Text('全部')),
+        ],
+        onChanged: (v) {
+          setState(() => _filterValues[f.field] = v ?? '');
+          reload();
+        },
+      );
+    }
+    final fieldCfg = cfg.fields[f.field];
+    if (fieldCfg == null) return const SizedBox.shrink();
+
+    InputDecoration deco(String hint) => InputDecoration(
+          hintText: hint,
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        );
+
+    if (f.type == 'month') {
+      final year = DateTime.now().year;
+      final years = [for (var y = year - 3; y <= year + 1; y++) y.toString()];
+      return Row(
+        children: [
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              value: (_filterValues['${f.field}:year'] ?? '').isEmpty ? '' : _filterValues['${f.field}:year'],
+              isExpanded: true,
+              decoration: deco('年份'),
+              items: [
+                const DropdownMenuItem(value: '', child: Text('全部年份')),
+                ...years.map((y) => DropdownMenuItem(value: y, child: Text(y))),
+              ],
+              onChanged: (v) {
+                setState(() => _filterValues['${f.field}:year'] = v ?? '');
+                reload();
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              value: (_filterValues['${f.field}:month'] ?? '').isEmpty ? '' : _filterValues['${f.field}:month'],
+              isExpanded: true,
+              decoration: deco('月份'),
+              items: [
+                const DropdownMenuItem(value: '', child: Text('全部月份')),
+                ...List.generate(12, (i) => DropdownMenuItem(value: '${i + 1}', child: Text('${i + 1}月'))),
+              ],
+              onChanged: (v) {
+                setState(() => _filterValues['${f.field}:month'] = v ?? '');
+                reload();
+              },
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (f.type == 'daterange') {
+      final from = _filterValues['${f.field}:from'] ?? '';
+      final to = _filterValues['${f.field}:to'] ?? '';
+      return Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44), alignment: Alignment.centerLeft),
+              onPressed: () => _pickDate('${f.field}:from'),
+              child: Text(from.isEmpty ? '从日期' : from, style: TextStyle(color: from.isEmpty ? AppColors.textMuted : AppColors.text)),
+            ),
+          ),
+          const Padding(padding: EdgeInsets.symmetric(horizontal: 6), child: Text('至', style: TextStyle(color: AppColors.textMuted))),
+          Expanded(
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44), alignment: Alignment.centerLeft),
+              onPressed: () => _pickDate('${f.field}:to'),
+              child: Text(to.isEmpty ? '到日期' : to, style: TextStyle(color: to.isEmpty ? AppColors.textMuted : AppColors.text)),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (f.type == 'select') {
+      final opts = fieldCfg.options ?? {};
+      return DropdownButtonFormField<String>(
+        value: (_filterValues[f.field] ?? '').isEmpty ? '' : _filterValues[f.field],
+        isExpanded: true,
+        decoration: deco('全部${fieldCfg.label}'),
+        items: [
+          DropdownMenuItem(value: '', child: Text('全部${fieldCfg.label}')),
+          ...opts.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))),
+        ],
+        onChanged: (v) {
+          setState(() => _filterValues[f.field] = v ?? '');
+          reload();
+        },
+      );
+    }
+
+    if (f.type == 'fk_select' && fieldCfg.fkResource != null) {
+      var rows = List<dynamic>.from(AppState.fkCache[fieldCfg.fkResource!] ?? []);
+      if (fieldCfg.fkFilter != null) {
+        rows = rows.where((r) => fieldCfg.fkFilter!.entries.every((e) => r[e.key]?.toString() == e.value?.toString())).toList();
+      }
+      final display = AppState.resources[fieldCfg.fkResource!]?.displayField ?? 'id';
+      return DropdownButtonFormField<String>(
+        value: (_filterValues[f.field] ?? '').isEmpty ? '' : _filterValues[f.field],
+        isExpanded: true,
+        decoration: deco('全部${fieldCfg.label}'),
+        items: [
+          DropdownMenuItem(value: '', child: Text('全部${fieldCfg.label}')),
+          ...rows.map((r) => DropdownMenuItem(value: r['id'].toString(), child: Text('${r[display] ?? r['id']}'))),
+        ],
+        onChanged: (v) {
+          setState(() => _filterValues[f.field] = v ?? '');
+          reload();
+        },
+      );
+    }
+
+    if (f.type == 'text_search' || f.type == 'tag_search') {
+      return TextField(
+        decoration: deco(f.type == 'tag_search' ? '按标签筛选' : '搜索${fieldCfg.label}'),
+        onChanged: (v) {
+          _filterValues[f.field] = v;
+        },
+        onSubmitted: (_) => reload(),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _filterBar() {
+    if (cfg.filters.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          for (final f in cfg.filters) ...[
+            _filterControl(f),
+            const SizedBox(height: 8),
+          ],
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () {
+                setState(() => _filterValues.clear());
+                reload();
+              },
+              child: const Text('清除筛选'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _skeleton() {
@@ -156,7 +415,7 @@ class ResourceListScreenState extends State<ResourceListScreen> {
     final title = row[cfg.displayField]?.toString() ?? '#${row['id']}';
     final id = row['id'].toString();
     return ListTile(
-      title: Text(title),
+      title: Text(widget.resourceName == 'daily_metrics' ? title : title),
       subtitle: Text(_subtitle(row)),
       onTap: () async {
         await Navigator.push(
@@ -201,7 +460,6 @@ class ResourceListScreenState extends State<ResourceListScreen> {
       );
     }
 
-    // 任务列表支持手势：右滑完成，左滑删除。其他资源保留普通删除按钮。
     if (widget.resourceName == 'tasks') {
       return ListView.separated(
         itemCount: _rows.length,
@@ -226,7 +484,7 @@ class ResourceListScreenState extends State<ResourceListScreen> {
             confirmDismiss: (direction) async {
               if (direction == DismissDirection.startToEnd) {
                 await _complete(id);
-                return false; // 完成后刷新列表本身移走该行，不需要 Dismissible 再帮忙移除
+                return false;
               }
               return _confirmDelete();
             },
@@ -244,30 +502,133 @@ class ResourceListScreenState extends State<ResourceListScreen> {
     );
   }
 
+  Widget _stepsChart() {
+    var last = _rows.whereType<Map>().toList();
+    last.sort((a, b) => a['metric_date'].toString().compareTo(b['metric_date'].toString()));
+    final range = _periodRange(_filterValues['_period'] ?? '');
+    if (range != null) {
+      final byDate = <String, num>{};
+      for (final r in last) {
+        final k = r['metric_date'].toString().substring(0, 10);
+        final v = (r['steps'] is num) ? r['steps'] as num : num.tryParse('${r['steps']}') ?? 0;
+        byDate[k] = v;
+      }
+      final filled = <Map>[];
+      var d = DateTime.parse(range['from']!);
+      final end = DateTime.parse(range['to']!);
+      while (!d.isAfter(end)) {
+        final k = _ymd(d);
+        filled.add({'metric_date': k, 'steps': byDate[k] ?? 0});
+        d = d.add(const Duration(days: 1));
+      }
+      last = filled;
+    }
+    if (last.isEmpty) return const SizedBox.shrink();
+    double maxV = 1;
+    for (final r in last) {
+      final v = (r['steps'] is num) ? (r['steps'] as num).toDouble() : double.tryParse('${r['steps']}') ?? 0;
+      if (v > maxV) maxV = v;
+    }
+    return Container(
+      height: 210,
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 8),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('🚶 步数走势', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final barH = c.maxHeight - 28;
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    for (final r in last)
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: Builder(
+                            builder: (_) {
+                              final v = (r['steps'] is num) ? (r['steps'] as num).toDouble() : double.tryParse('${r['steps']}') ?? 0;
+                              final h = (barH * (v / maxV)).clamp(4.0, barH);
+                              final label = r['metric_date'].toString();
+                              final md = label.length >= 10 ? label.substring(5, 10) : label;
+                              return Column(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Text('${v.toInt()}', style: const TextStyle(fontSize: 9, color: AppColors.accent)),
+                                  const SizedBox(height: 4),
+                                  Container(
+                                    height: h,
+                                    width: 14,
+                                    decoration: BoxDecoration(
+                                      borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                                      gradient: const LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [Color(0xFF00F0FF), Color(0xFF00C2D1)],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(md, style: const TextStyle(fontSize: 9, color: AppColors.textMuted)),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBody() {
-    if (_loading) return _skeleton();
-    if (_error != null) return Center(child: Text('加载失败: $_error'));
-    return RefreshIndicator(onRefresh: reload, child: _buildList());
+    if (_loading && _rows.isEmpty) return _skeleton();
+    if (_error != null && _rows.isEmpty) return Center(child: Text('加载失败: $_error'));
+    return Column(
+      children: [
+        _filterBar(),
+        if (widget.resourceName == 'daily_metrics') _stepsChart(),
+        Expanded(
+          child: RefreshIndicator(onRefresh: reload, child: _buildList()),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final fab = FloatingActionButton(
-      onPressed: () async {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => ResourceFormScreen(resourceName: widget.resourceName, id: null)),
-        );
-        reload();
-      },
-      child: const Icon(Icons.add),
-    );
+    final fab = cfg.allowCreate
+        ? FloatingActionButton(
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => ResourceFormScreen(resourceName: widget.resourceName, id: null)),
+              );
+              reload();
+            },
+            child: const Icon(Icons.add),
+          )
+        : null;
 
     if (widget.embedded) {
       return Stack(
         children: [
           _buildBody(),
-          Positioned(right: 16, bottom: 16, child: fab),
+          if (fab != null) Positioned(right: 16, bottom: 16, child: fab),
         ],
       );
     }

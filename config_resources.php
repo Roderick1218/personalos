@@ -352,15 +352,20 @@ $config = [
     ],
 
     'daily_metrics' => [
-        'label' => '健康指标', 'group' => 'A', 'icon' => '❤️', 'display_field' => 'metric_date',
+        'label' => '步数记录', 'group' => 'personal', 'icon' => '🚶', 'display_field' => 'metric_date',
         'fields' => [
             'metric_date' => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
             'weight_kg'   => ['type' => 'decimal', 'label' => '体重 (kg)'],
             'sleep_hours' => ['type' => 'decimal', 'label' => '睡眠时长 (小时)'],
             'water_ml'    => ['type' => 'number', 'label' => '饮水量 (ml)'],
             'mood'        => ['type' => 'number', 'label' => '心情 (1-5)', 'min' => 1, 'max' => 5],
-            'steps'       => ['type' => 'number', 'label' => '步数'],
+            'steps'       => ['type' => 'number', 'label' => '步数', 'readonly' => true],
             'notes'       => ['type' => 'text', 'label' => '备注'],
+        ],
+        'allow_create' => false,
+        'filters' => [
+            ['field' => '_period', 'type' => 'period'],
+            ['field' => 'metric_date', 'type' => 'daterange'],
         ],
     ],
 

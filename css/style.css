@@ -385,14 +385,58 @@ tr:hover { background: rgba(0,240,255,0.05); }
   backdrop-filter: blur(16px);
   border: 1px solid var(--card-border);
   border-radius: 10px; box-shadow: var(--shadow);
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
 }
 .filter-bar select, .filter-bar input {
   padding: 7px 10px; border: 1px solid var(--card-border); border-radius: 6px; font-size: 13px;
   background: rgba(255,255,255,0.04); color: var(--text);
+  min-height: 44px;
+  min-width: 0;
+  flex: 1 1 140px;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: rgba(0,240,255,0.2);
+}
+.filter-bar button {
+  min-height: 44px;
+  pointer-events: auto;
 }
 .filter-bar select {
   background-color: #0D1420; /* select 的下拉面板是系统另外渲染的，半透明背景传不过去，要用实色 */
 }
+
+.steps-chart {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  height: 180px;
+  overflow-x: auto;
+  padding: 4px 0 0;
+}
+.steps-bar {
+  flex: 1;
+  min-width: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+.steps-bar-col {
+  flex: 1;
+  width: 70%;
+  display: flex;
+  align-items: flex-end;
+}
+.steps-bar-fill {
+  width: 100%;
+  background: linear-gradient(180deg, #00F0FF, #00C2D1);
+  border-radius: 6px 6px 2px 2px;
+  min-height: 4px;
+  box-shadow: 0 0 10px rgba(0,240,255,0.35);
+}
+.steps-bar-val { font-size: 10px; color: var(--light-blue); margin-top: 4px; }
+.steps-bar-label { font-size: 10px; color: var(--muted); }
 
 /* ---------- Modal ---------- */
 .modal-backdrop {

@@ -123,6 +123,7 @@ class _ResourceFormScreenState extends State<ResourceFormScreen> {
     for (final entry in cfg.fields.entries) {
       final key = entry.key;
       final f = entry.value;
+      if (f.readonly) continue;
       if (f.type == 'boolean') {
         data[key] = _values[key] == true;
       } else if (['select', 'fk', 'date', 'time', 'datetime', 'color'].contains(f.type)) {
@@ -134,6 +135,7 @@ class _ResourceFormScreenState extends State<ResourceFormScreen> {
     for (final entry in cfg.fields.entries) {
       final f = entry.value;
       if (!_isFieldVisible(f)) continue; // 藏起来的字段不用管有没有填
+      if (f.readonly) continue;
       if (f.required && f.type != 'boolean') {
         final v = data[entry.key];
         if (v == null || v.toString().isEmpty) {
@@ -252,8 +254,14 @@ class _ResourceFormScreenState extends State<ResourceFormScreen> {
       case 'number':
         return TextFormField(
           controller: _controllers[key],
+          readOnly: f.readonly,
+          enabled: !f.readonly,
           keyboardType: TextInputType.number,
-          decoration: InputDecoration(labelText: labelText, border: const OutlineInputBorder()),
+          decoration: InputDecoration(
+            labelText: labelText,
+            helperText: f.readonly ? '由 App 根据走路自动记录，不能手动改' : null,
+            border: const OutlineInputBorder(),
+          ),
         );
 
       case 'decimal':
