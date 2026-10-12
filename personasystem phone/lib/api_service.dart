@@ -188,6 +188,9 @@ class ApiService {
       if (identical(e.value, invalidFieldValue)) throw Exception('字段 ${e.key} 格式不对');
     }
     insertData = await applyReminderTimeRule(resource, 'create', null, insertData);
+    if (resource == 'tasks' && insertData['status'] == 'done') {
+      insertData['completed_at'] = DateTime.now().toUtc().toIso8601String();
+    }
     final row = await sb.from(resource).insert(insertData).select().single();
     if (resource == 'salary_payments') await syncSalaryPayment(row['id']);
     if (resource == 'fixed_deposits') await syncFixedDepositOpen(row['id']);
@@ -200,6 +203,17 @@ class ApiService {
       if (identical(e.value, invalidFieldValue)) throw Exception('字段 ${e.key} 格式不对');
     }
     updateData = await applyReminderTimeRule(resource, 'update', id, updateData);
+
+    // 2026-10-12: 跟网站端 js/supabase_bridge.js 同一套逻辑——任务的"完成时间"跟着状态自动走，
+    // 只有状态真的从"非已完成"变成"已完成"才盖上当下时间，改回"未完成"就清空；没动到 status
+    // 的一般编辑不受影响，不会把完成时间刷新成"刚刚"。
+    if (resource == 'tasks' && updateData.containsKey('status')) {
+      final existingTask = await sb.from('tasks').select('status').eq('id', id).maybeSingle();
+      final wasDone = existingTask?['status'] == 'done';
+      final willBeDone = updateData['status'] == 'done';
+      if (willBeDone && !wasDone) updateData['completed_at'] = DateTime.now().toUtc().toIso8601String();
+      else if (!willBeDone && wasDone) updateData['completed_at'] = null;
+    }
 
     num? previousFdPrincipal;
     if (resource == 'fixed_deposits' && updateData.containsKey('principal')) {
@@ -216,12 +230,23 @@ class ApiService {
     if (resource == 'fixed_deposits' && previousFdPrincipal != null) await syncFixedDepositPrincipalChange(id, previousFdPrincipal);
   }
 
-  static Future<void> delete(String resource, String id) async {
+  static Future<void> delete(String resource, String id, {bool cascadeSalaryPayments = false}) async {
     final inUse = await checkInUse(resource, id);
     if (inUse > 0) throw Exception('还有 $inUse 条记录在用这个，请先改掉那些记录再删除');
     if (resource == 'salary_payments') {
       final sp = await sb.from('salary_payments').select('transaction_id').eq('id', id).maybeSingle();
       if (sp != null && sp['transaction_id'] != null) await sb.from('transactions').delete().eq('id', sp['transaction_id']);
+    }
+    // 2026-10-12: 跟网站端 js/supabase_bridge.js 同一套逻辑——bank_accounts 被
+    // salary_payments.bank_account_id 用 ON DELETE RESTRICT 挡住 (故意设计，避免发薪历史记录
+    // "忘了付去哪个账户")。调用端 (resource_list_screen.dart) 先查出关联笔数、明确警告用户
+    // 会连同薪资记录一起永久删除，确认了才带 cascadeSalaryPayments=true 走到这里。
+    if (resource == 'bank_accounts' && cascadeSalaryPayments) {
+      final sps = await sb.from('salary_payments').select('id, transaction_id').eq('bank_account_id', id);
+      for (final sp in (sps as List)) {
+        if (sp['transaction_id'] != null) await sb.from('transactions').delete().eq('id', sp['transaction_id']);
+        await sb.from('salary_payments').delete().eq('id', sp['id']);
+      }
     }
     var del = sb.from(resource).delete().eq('id', id);
     final delUid = sb.auth.currentUser?.id;

@@ -121,8 +121,8 @@ class ResourceListScreenState extends State<ResourceListScreen> {
     }
   }
 
-  Future<void> _delete(String id) async {
-    await ApiService.delete(widget.resourceName, id);
+  Future<void> _delete(String id, {bool cascadeSalaryPayments = false}) async {
+    await ApiService.delete(widget.resourceName, id, cascadeSalaryPayments: cascadeSalaryPayments);
     AppState.invalidateFk(widget.resourceName);
     if (widget.resourceName == 'reminders') {
       await NotificationService.cancelReminder(id);
@@ -143,6 +143,32 @@ class ResourceListScreenState extends State<ResourceListScreen> {
       ),
     );
     return confirm == true;
+  }
+
+  // 2026-10-12: bank_accounts 被 salary_payments.bank_account_id 用 ON DELETE RESTRICT 挡住
+  // (故意设计，避免发薪历史记录"忘了付去哪个账户")。跟网站端同一套处理——先查一次有没有关联的
+  // 薪资记录，有的话换一个更明确的警告 (讲清楚会连 EPF/SOCSO/EIS 供款记录、自动生成的交易一起
+  // 永久删掉)，确认了才带 cascade 标记真的删除；没有关联就走原本的普通确认框。
+  // 回传 null 代表取消不删；非 null 代表要删，布尔值本身就是要不要带 cascade 标记。
+  Future<bool?> _confirmBankAccountDelete(String id) async {
+    final sps = await ApiService.list('salary_payments', filters: {'bank_account_id': id});
+    if (sps.isEmpty) return (await _confirmDelete()) ? false : null;
+    final count = sps.length;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('这个账户有薪资记录关联'),
+        content: Text(
+          '这个账户有 $count 笔薪资记录关联，无法直接删除。\n\n'
+          '如果继续，会连同这 $count 笔薪资记录 (含对应的 EPF/SOCSO/EIS 供款记录、自动生成的收入交易) 一起永久删除，无法恢复。确定要继续吗？',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('连同薪资记录一起删除')),
+        ],
+      ),
+    );
+    return confirm == true ? true : null;
   }
 
   Future<void> _complete(String id) async {
@@ -193,6 +219,54 @@ class ResourceListScreenState extends State<ResourceListScreen> {
       if (parts.length >= 3) break;
     }
     return parts.join(' · ');
+  }
+
+  // 2026-10-12: 备忘录详情——只读展示，换行照原样保留 (Text 本来就会把 \n 当真的换行显示，
+  // 不像网站那边普通 <td> 需要额外加 white-space:pre-wrap 才行)。"编辑"按钮才真的进表单。
+  Future<void> _showJournalDetail(Map<String, dynamic> row) async {
+    final tagId = row['tag_id'];
+    final tagLabel = (tagId != null) ? AppState.fkLabel('tags', tagId) : null;
+    final mood = row['mood'];
+    final id = row['id'].toString();
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(row['entry_date']?.toString() ?? ''),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (tagLabel != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text('标签：$tagLabel', style: const TextStyle(color: AppColors.textMuted)),
+                ),
+              if (mood != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text('心情：$mood/5', style: const TextStyle(color: AppColors.textMuted)),
+                ),
+              SelectableText((row['content'] ?? '').toString()),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭')),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => ResourceFormScreen(resourceName: widget.resourceName, id: id)),
+              );
+              reload();
+            },
+            child: const Text('编辑'),
+          ),
+        ],
+      ),
+    );
   }
 
   String _formatTimeLike(String val) {
@@ -418,6 +492,13 @@ class ResourceListScreenState extends State<ResourceListScreen> {
       title: Text(widget.resourceName == 'daily_metrics' ? title : title),
       subtitle: Text(_subtitle(row)),
       onTap: () async {
+        // 2026-10-12: 备忘录的内容 (textarea) 本来就不会出现在列表 subtitle 里 (太长)，之前
+        // 点一下整条就直接进编辑模式——想看内容结果常常手滑改到东西。改成先弹一个只读的内容框，
+        // 真的要改才点里面的"编辑"按钮进表单。其他资源维持原本"点了就是编辑"的行为不变。
+        if (widget.resourceName == 'journal_entries') {
+          await _showJournalDetail(row);
+          return;
+        }
         await Navigator.push(
           context,
           MaterialPageRoute(
@@ -440,6 +521,11 @@ class ResourceListScreenState extends State<ResourceListScreen> {
                 IconButton(
                   icon: const Icon(Icons.delete_outline, color: AppColors.danger),
                   onPressed: () async {
+                    if (widget.resourceName == 'bank_accounts') {
+                      final cascade = await _confirmBankAccountDelete(id);
+                      if (cascade != null) _delete(id, cascadeSalaryPayments: cascade);
+                      return;
+                    }
                     if (await _confirmDelete()) _delete(id);
                   },
                 ),

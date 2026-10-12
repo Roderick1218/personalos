@@ -1064,6 +1064,9 @@ const SupabaseBridge = {
           if (v === undefined) return { ok: false, error: `字段 ${col} 格式不对` };
         }
         insertData = await applyReminderTimeRule(resource, 'create', null, insertData);
+        // 2026-10-12: 任务新增时如果直接就选了"已完成"状态 (少见但表单上选得到)，顺手盖一个完成时间，
+        // 不留一个"状态是已完成、完成时间却是空的"的奇怪状态。
+        if (resource === 'tasks' && insertData.status === 'done') insertData.completed_at = new Date().toISOString();
         const { data, error } = await sb.from(resource).insert(insertData).select().single();
         if (error) throw error;
         if (resource === 'salary_payments') await syncSalaryPayment(data.id);
@@ -1079,6 +1082,19 @@ const SupabaseBridge = {
           if (v === undefined) return { ok: false, error: `字段 ${col} 格式不对` };
         }
         updateData = await applyReminderTimeRule(resource, 'update', payload.id, updateData);
+
+        // 2026-10-12: 任务的"完成时间"要跟着状态自动走，不能让用户自己填——只有状态真的从
+        // "非已完成"变成"已完成"那一刻才盖上当下时间；反过来从"已完成"改回"未完成"就清空，
+        // 不留一个跟当前状态对不上的旧完成时间。只比对 status 真的有送来改的情况，单纯改标题/
+        // 描述之类没动到 status 的一般编辑不会动到这个栏位 (不然每次随便改点什么都会把完成时间
+        // 刷新成"刚刚"，变成完全不准)。
+        if (resource === 'tasks' && 'status' in updateData) {
+          const { data: existingTask } = await sb.from('tasks').select('status').eq('id', payload.id).maybeSingle();
+          const wasDone = existingTask?.status === 'done';
+          const willBeDone = updateData.status === 'done';
+          if (willBeDone && !wasDone) updateData.completed_at = new Date().toISOString();
+          else if (!willBeDone && wasDone) updateData.completed_at = null;
+        }
 
         // 编辑定存改本金之前，先记下"改之前"的本金——改完要拿这个跟新值比较才知道差额多少
         let previousFdPrincipal = null;
@@ -1117,6 +1133,18 @@ const SupabaseBridge = {
         if (resource === 'salary_payments') {
           const { data: sp } = await sb.from('salary_payments').select('transaction_id').eq('id', payload.id).maybeSingle();
           if (sp && sp.transaction_id) await sb.from('transactions').delete().eq('id', sp.transaction_id);
+        }
+        // 2026-10-12: bank_accounts 被 salary_payments.bank_account_id 用 ON DELETE RESTRICT 挡住
+        // (故意的设计，避免发薪历史记录"忘了是付去哪个账户")，正常删除会直接收到数据库原始的
+        // 外键错误。用户明确要求"连同薪资记录一起删"时，前端会先弹确认、带 cascade_salary_payments
+        // 标记重新呼叫——这里才真的按 salary_payments 的单笔删除同一套逻辑 (先清掉自动生成的那笔
+        // 交易) 逐一删掉，EPF/SOCSO/EIS 供款记录本来就是 ON DELETE CASCADE，不用另外处理。
+        if (resource === 'bank_accounts' && payload.cascade_salary_payments) {
+          const { data: sps } = await sb.from('salary_payments').select('id, transaction_id').eq('bank_account_id', payload.id);
+          for (const sp of (sps || [])) {
+            if (sp.transaction_id) await sb.from('transactions').delete().eq('id', sp.transaction_id);
+            await sb.from('salary_payments').delete().eq('id', sp.id);
+          }
         }
         const { data: { session: delSession } } = await sb.auth.getSession();
         const { error } = await sb.from(resource).delete().eq('id', payload.id).eq('user_id', delSession.user.id);

@@ -275,7 +275,23 @@ class _StepTaskHandler extends TaskHandler {
   Future<void> _ensureSupabase() async {
     if (_supabaseReady) return;
     try {
-      await Supabase.initialize(url: kSupabaseUrl, anonKey: kSupabaseAnonKey);
+      // 2026-10-12 重要发现: 背景 isolate 跟主 App isolate 是两个各自独立的 GoTrueClient，
+      // 却共用同一份 SharedPreferences 存档。Supabase 的 refresh token 是"一次性"的——
+      // 用掉就旋转成新的一组。如果两边都开着各自的 autoRefreshToken 定时器 (默认行为)，
+      // 只要两边的续期时机撞在一起，其中一边一定会拿着"已经被对方用掉"的旧 refresh token
+      // 去续期而失败。大多时候 gotrue 够聪明会直接发现"我手上这份 session 其实还没过期"
+      // 而不登出，但背景 isolate 这颗 Dart Timer 在真正长时间背景执行时(Android 省电/doze)
+      // 不保证准时触发——真的拖到它手上的 access token 也已经过期才尝试续期，这次就会被
+      // gotrue 判定成"session 真的失效了"，直接清空共用存档——使用者下次开 App 就会被
+      // 强制要求重新登入，而且完全没感觉到哪里出错 (这正是"手机时不时会断出登入"的成因)。
+      // 解法: 背景 isolate 关掉它自己内建的 autoRefreshToken 定时器，改成靠本来就每 30 秒
+      // 跑一次、由前台服务驱动、更准时可靠的心跳自己去检查+续期 (见 _ensureFreshSession)，
+      // 主 App isolate 维持原本默认设定 (App 在前景才会跑，跟着生命周期自动开关)。
+      await Supabase.initialize(
+        url: kSupabaseUrl,
+        anonKey: kSupabaseAnonKey,
+        authOptions: const FlutterAuthClientOptions(autoRefreshToken: false),
+      );
     } catch (_) {
       // 已经初始化过 (比如服务重启但 isolate 没真的销毁) 会丢例外，忽略即可。
     }
@@ -283,6 +299,20 @@ class _StepTaskHandler extends TaskHandler {
     // 记下"这个 isolate 是替哪个账号跑的"。每次心跳都会拿它跟当前 session 比一次，
     // 对不上就整轮跳过，宁可这一轮什么都不做，也不要把旧账号的数据写到别人名下。
     _boundUserId = Supabase.instance.client.auth.currentSession?.user.id;
+  }
+
+  // 用这个心跳本身的 30 秒节奏当"续期时钟"，而不是依赖 GoTrueClient 内建、在背景执行时
+  // 不保证准时的 Dart Timer——session 快过期 (isExpired 本身就留了缓冲) 就主动续一次，
+  // 让背景 isolate 的 access token 几乎不会真的撑到过期才被迫用一个可能已经被主 App
+  // 轮换掉的旧 refresh token 去续期 (那种情况下 gotrue 才会真的判定登出、清空共用存档)。
+  Future<void> _ensureFreshSession() async {
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null || !session.isExpired) return;
+    try {
+      await Supabase.instance.client.auth.refreshSession();
+    } catch (_) {
+      // 续期失败就算了，下一次 30 秒心跳再试；各个查询自己也还有各自的失败重试保险。
+    }
   }
 
   String _todayKey() {
@@ -352,16 +382,21 @@ class _StepTaskHandler extends TaskHandler {
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     _sub = Pedometer.stepCountStream.listen(_onStepCount, onError: (_) {});
+    await _ensureSupabase();
+    await _ensureFreshSession();
     _checkReminders();
     _checkSubscriptionsAndBirthdays();
   }
 
   @override
-  void onRepeatEvent(DateTime timestamp) {
-    // 30 秒一次的心跳：① 保险起见再同步一次步数 (万一某次传感器事件的写入失败了)；
-    // ② 用上次记住的开机累计步数重新跑一次 baseline 检查——这样跨过午夜之后最多 30 秒内
-    // 就会自动归零，不用等用户实际走出第一步或者重开 App；③ 检查有没有到期的提醒该弹；
-    // ④ 检查有没有进入提醒窗口的订阅续费/生日。
+  void onRepeatEvent(DateTime timestamp) async {
+    // 30 秒一次的心跳：① 先用这次心跳顺便检查+续期 session (见 _ensureFreshSession)；
+    // ② 保险起见再同步一次步数 (万一某次传感器事件的写入失败了)；③ 用上次记住的开机
+    // 累计步数重新跑一次 baseline 检查——这样跨过午夜之后最多 30 秒内就会自动归零，
+    // 不用等用户实际走出第一步或者重开 App；④ 检查有没有到期的提醒该弹；⑤ 检查有没有
+    // 进入提醒窗口的订阅续费/生日。
+    await _ensureSupabase();
+    await _ensureFreshSession();
     if (_lastRawSteps != null) {
       _recomputeAndPush(_lastRawSteps!);
     } else {

@@ -337,7 +337,7 @@ class DashboardScreenState extends State<DashboardScreen> {
             },
           ),
           _tintCard(
-            '📓 今日日记',
+            '📓 今日备忘录',
             AppColors.surface,
             journal == null
                 ? [const Text('今天还没写', style: TextStyle(color: AppColors.textMuted))]

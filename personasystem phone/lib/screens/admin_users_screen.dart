@@ -40,7 +40,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: Text('删除用户「${user['display_name'] ?? user['username']}」'),
-        content: const Text('这会永久删除这个账号名下所有模块的所有数据 (任务/交易/日记...全部)，不是只删账号本身，不能恢复。'),
+        content: const Text('这会永久删除这个账号名下所有模块的所有数据 (任务/交易/备忘录...全部)，不是只删账号本身，不能恢复。'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('删除', style: TextStyle(color: AppColors.danger))),

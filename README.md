@@ -6,8 +6,39 @@
 - 网站：`C:\xampp\htdocs\personal_os\`
 - App：`C:\Users\whb user\personasystem\`（短路径 `C:\Users\WHBUSE~1\personasystem`）
 - 历史演进长文（v1～v4）：`project_personal_life_os.md` —— **已过时**，只查「为什么当年这样设计」时再打开，不要按里面的登录方式/架构改代码。
+- English version: [`README.en.md`](README.en.md)（内容跟这份中文版一一对应）
 
-最后一次大更新：**2026-10-02**。
+最后一次大更新：**2026-10-12**。
+
+---
+
+## 0. 画面预览
+
+| 今日仪表盘 | 任务管理 (含自动创建/完成时间) |
+|---|---|
+| ![仪表盘](screenshots/dashboard.png) | ![任务](screenshots/tasks.png) |
+
+| 财务记账 | 银行账户 (删除保护) |
+|---|---|
+| ![财务记账](screenshots/transactions.png) | ![银行账户](screenshots/bank_accounts.png) |
+
+| 备忘录 (原「日记」) |
+|---|
+| ![备忘录](screenshots/memos.png) |
+
+---
+
+## 0.1 2026-10-12 这轮的更新摘要
+
+- **UI 整体重新设计 (v6.0)**：参考用户提供的设计稿，主色调从单一荧光青色改成蓝→青渐变 + 各模块各自配色，圆角大幅加大变柔和，仪表盘顶部改成玻璃光晕欢迎横幅。纯 CSS 改动 (`css/style.css`)，没有动功能逻辑。
+- **背景服务登入竞态问题修复**：App 背景步数/提醒服务跟主程式各自独立的自动续登令牌会互相抢，偶尔导致被迫重新登入。改成背景服务借用本来就可靠的 30 秒心跳自己检查+续登，大幅降低机率 (`step_service.dart`)。
+- **任务新增「创建时间」「完成时间」自动记录**：`tasks.created_at`/`completed_at`，状态改「已完成」才盖时间戳，改回「未完成」清空；跟标题/描述等无关字段的编辑不受影响。
+- **标签模块化**：提醒/备忘录/联系人的标签从自由文字改成跟任务/财务一样的下拉选择 (`tags.module` 分类)，同时修掉 App 和网站各自独立存在的「fk_filter 没套用」「fkCache 没失效」的 bug。
+- **「日记」改名「备忘录」**：纯显示名称/文案变更，底层表名 `journal_entries` 不变。备忘录内容列表显示修正 (`white-space:pre-wrap`)，App 端改成「先看只读内容，点编辑才进表单」。
+- **银行账户删除保护**：账户底下有薪资记录会先警告「会连同 N 笔薪资记录 (含 EPF/SOCSO/EIS 供款、自动生成交易) 一并永久删除」，确认后才真的级联删除，不会再让使用者看到数据库原始外键错误。
+- **时区显示修正**：网站列表、App 编辑表单里好几处 datetime 字段漏了 `.toLocal()` 转换，显示时间少 8 小时的问题一并修掉。
+
+修改 `config_resources.php` 之后**必须**重新生成 `config_resources.json`（网站 + App `assets/` 各一份）才会生效，光改 `.php` 不会有任何效果——这是本轮踩过的坑，细节见第 7 节。
 
 ---
 
@@ -20,7 +51,7 @@
                                                               (Postgres + Auth + RLS)
 ```
 
-没有自己的 PHP 后端。`api.php` / `db.php` / `config_resources.php` 是死代码，只当参考。真正逻辑在两份桥接文件，必须**手动同步**（改 JS 不会自动改 Dart）。
+没有自己的 PHP 后端。`api.php` / `db.php` 是死代码，只当参考；`config_resources.php` 不是死代码，**仍是真正的配置来源**，只是不会被服务器即时执行——改完要手动跑一次 PHP CLI 生成 `config_resources.json`（网站/App 实际读的是这份 JSON），细节见第 7 节。真正的业务逻辑在两份桥接文件 (`js/supabase_bridge.js` / `lib/supabase_bridge.dart`)，必须**手动同步**（改 JS 不会自动改 Dart）。
 
 数据隔离靠 **RLS**（`auth.uid() = user_id`）。前端只放 **anon key**，绝对不要放 `service_role`。管理员例外规则用 `public.is_admin()`。
 
@@ -30,7 +61,7 @@
 
 ## 2. 功能一览（用户能用到的）
 
-任务 / 项目 / 习惯打卡 / 日记 / 收件箱 / 联系人（生日提醒）/ 链接 / 标签 / 收支分类 / 银行与现金 / 记账（收入、支出、转账，余额现算）/ 动态薪资 + EPF 三户口 / SOCSO、EIS / 订阅到期扣费 / 定期存款 / 周月年报 / 通用提醒 / 全局搜索 / 步数（仅 App）/ 本地通知（仅 App）
+任务（含创建/完成时间自动记录）/ 项目 / 习惯打卡 / 备忘录（原「日记」）/ 收件箱 / 联系人（生日提醒）/ 链接 / 标签（按模块分类）/ 收支分类 / 银行与现金（删除保护）/ 记账（收入、支出、转账，余额现算）/ 动态薪资 + EPF 三户口 / SOCSO、EIS / 订阅到期扣费 / 定期存款 / 周月年报 / 通用提醒 / 全局搜索 / 步数（仅 App）/ 本地通知（仅 App）
 
 **账号：**
 
@@ -58,10 +89,14 @@ C:\xampp\htdocs\personal_os\
   js/app.js                  全部 UI
   js/supabase_bridge.js      网站后端（Auth / CRUD / 仪表盘 / 备份）
   img/                       产品图标（来自用户 SVG）
-  config_resources.json      资源配置
+  screenshots/               README 用的画面截图
+  config_resources.json      资源配置（真正被网站/App读取的那份，见第 7 节）
   个人系统_schema_supabase.sql   建表+RLS 参考（可能略旧，以线上库为准）
-  README.md                  本文件（现状）
+  README.md                  本文件（现状，中文）
+  README.en.md               本文件的英文版
   project_personal_life_os.md  历史 changelog
+  anben-app.apk              最新打包好的 App 安装包（装新版本/给别人测试用）
+  anben_app_source.zip       App 完整源码打包（给之后要接手改 App 的人/环境用）
 
 C:\Users\whb user\personasystem\
   lib/main.dart, api_service.dart, supabase_bridge.dart, screens/, step_service.dart
@@ -69,7 +104,7 @@ C:\Users\whb user\personasystem\
   android/.../ic_launcher*   桌面图标
 ```
 
-网站当前缓存版本（改 JS/CSS 后请再 +1）：`supabase_bridge.js?v=19`，`app.js?v=20261002e`，`style.css?v=20261002a`。
+网站当前缓存版本（改 JS/CSS 后请再 +1）：`supabase_bridge.js?v=22`，`app.js?v=20261012b`，`style.css?v=20261012c`。
 
 ---
 
@@ -148,6 +183,15 @@ $$;
 ## 7. 日常改功能
 
 1. 改字段：`config_resources.php` → 生成 `config_resources.json` → 复制到 App `assets/` → 网站 bump `?v=` → App 重编 APK
+
+   生成 JSON 的具体命令 (PHP CLI，`$config` 来自文件末尾的 `return $config;`，JSON 顶层就是这个 map 本身，**不要**包一层 `{ok,resources}`)：
+   ```php
+   <?php
+   $config = require "C:\\xampp\\htdocs\\personal_os\\config_resources.php";
+   file_put_contents("C:\\xampp\\htdocs\\personal_os\\config_resources.json", json_encode($config, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+   ```
+   跑完记得 `Copy-Item config_resources.json` 到 App 的 `assets\config_resources.json` 再重新编译 APK，不然 App 端的表单/下拉还是旧设定。**只改 `.php` 不做这一步，网站和 App 完全看不出任何变化**——2026-10-12 这轮真的在这里卡过一次。
+
 2. 新表：Supabase 建表 + RLS + admin policy + php 配置 + 两边桥接若有特殊逻辑
 3. 网站：本机 `C:\xampp\htdocs\personal_os` 可能自动同步 InfinityFree。网址：`https://personalos.infinityfree.me`
 4. App：
@@ -197,3 +241,5 @@ flutter install -d <设备ID>
 7. 改 `app.js` / `supabase_bridge.js` / `style.css` 必须 bump `index.html` 版本号。
 8. 图标：用户 SVG → 网站 `img/`、App `assets/logo.png` 与 Android mipmap。
 9. **现状以本 README 为准**；`project_personal_life_os.md` 只是考古。
+10. 改了 `config_resources.php` 之后一定要重新生成 `config_resources.json` 并复制到网站根目录 + App `assets/`，否则改了等于没改（见第 7 节）。
+11. 改完中文版 README 记得同步改 `README.en.md`，两份内容要对得上。

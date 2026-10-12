@@ -45,6 +45,14 @@ $config = [
             'priority'    => ['type' => 'select', 'label' => '优先级', 'default' => 'medium',
                 'options' => ['low' => '低', 'medium' => '中', 'high' => '高', 'urgent' => '紧急']],
             'due_date'    => ['type' => 'date', 'label' => '截止日期'],
+            // 2026-10-12: created_at/completed_at 两个栏位数据库本来就有 (created_at 新增时
+            // DEFAULT now() 自动写入；completed_at 之前只是空摆着没人用)，只是从来没放进表单/
+            // 列表配置里，所以用户完全看不到。标成 readonly——表单只显示不能手动改，提交时也会
+            // 被整个跳过不送出 (见 app.js submitForm / resource_form_screen.dart 对 readonly 的处理)。
+            // 真正让 completed_at 被写入的逻辑在 supabase_bridge.js / supabase_bridge.dart 的
+            // update() 里：status 改成 done 才自动盖上当下时间，改回 todo 就清空。
+            'created_at'   => ['type' => 'datetime', 'label' => '创建时间', 'readonly' => true],
+            'completed_at' => ['type' => 'datetime', 'label' => '完成时间', 'readonly' => true],
         ],
         'filters' => [
             ['field' => 'status', 'type' => 'select'],
@@ -81,10 +89,11 @@ $config = [
     ],
 
     'journal_entries' => [
-        'label' => '日记', 'group' => 'personal', 'icon' => '📓', 'display_field' => 'entry_date',
+        // 2026-10-12: 用户要求把"日记"改名成"备忘录" (底层表名/字段都不动，纯粹是显示名称跟文案)。
+        'label' => '备忘录', 'group' => 'personal', 'icon' => '📓', 'display_field' => 'entry_date',
         'fields' => [
             'entry_date' => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],
-            'content'    => ['type' => 'textarea', 'label' => '内容 (支持 Markdown)', 'placeholder' => '今天发生了什么、想到了什么...'],
+            'content'    => ['type' => 'textarea', 'label' => '内容 (支持 Markdown)', 'placeholder' => '记录重要事项、想法...'],
             'mood'       => ['type' => 'number', 'label' => '心情 (1-5，1=很差，5=很好)', 'min' => 1, 'max' => 5, 'placeholder' => '1-5'],
             'tag_id'     => ['type' => 'fk', 'label' => '标签 (选填)', 'fk_resource' => 'tags', 'fk_filter' => ['module' => 'journal']],
         ],
@@ -147,7 +156,7 @@ $config = [
             'name'   => ['type' => 'text', 'label' => '标签名称', 'required' => true, 'placeholder' => '如：工作、旅行'],
             'color'  => ['type' => 'color', 'label' => '颜色'],
             'module' => ['type' => 'select', 'label' => '适用模块 (这个标签只会出现在哪个模块的下拉里)', 'required' => true,
-                'options' => ['finance' => '财务', 'task' => '任务', 'link' => '链接', 'reminder' => '提醒', 'journal' => '日记', 'contact' => '联系人']],
+                'options' => ['finance' => '财务', 'task' => '任务', 'link' => '链接', 'reminder' => '提醒', 'journal' => '备忘录', 'contact' => '联系人']],
         ],
     ],
 
@@ -587,7 +596,7 @@ $config = [
 
     'reports' => [
         'label' => '报表汇总', 'group' => 'finance', 'icon' => '📑', 'display_field' => 'period_start',
-        'note' => '选一个期间生成报表：收支/分类占比/前5大支出/薪资/EPF供款/订阅扣费/期末各账户余额，外加习惯打卡次数和日记篇数。同一个期间可以重新生成覆盖最新数字，不会重复堆一份新的。',
+        'note' => '选一个期间生成报表：收支/分类占比/前5大支出/薪资/EPF供款/订阅扣费/期末各账户余额，外加习惯打卡次数和备忘录篇数。同一个期间可以重新生成覆盖最新数字，不会重复堆一份新的。',
         'fields' => [
             'report_type'  => ['type' => 'select', 'label' => '类型', 'required' => true,
                 'options' => ['weekly' => '周报', 'monthly' => '月报', 'yearly' => '年报']],

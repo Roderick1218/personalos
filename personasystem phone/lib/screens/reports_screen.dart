@@ -156,7 +156,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               child: Padding(
                 padding: EdgeInsets.all(14),
                 child: Text(
-                  '💡 选一个期间生成报表：收支/分类占比/前5大支出/薪资/EPF供款/订阅扣费/期末各账户余额，外加习惯打卡次数和日记篇数。同一个期间可以重新生成覆盖最新数字。',
+                  '💡 选一个期间生成报表：收支/分类占比/前5大支出/薪资/EPF供款/订阅扣费/期末各账户余额，外加习惯打卡次数和备忘录篇数。同一个期间可以重新生成覆盖最新数字。',
                   style: TextStyle(color: AppColors.accent, fontSize: 13, height: 1.4),
                 ),
               ),
@@ -325,7 +325,7 @@ class _ReportCardState extends State<_ReportCard> {
               '🔄 订阅扣费',
               '${(c['subscriptions_charged']?['count']) ?? 0} 笔，共 RM ${(((c['subscriptions_charged']?['total']) as num?) ?? 0).toStringAsFixed(2)}',
             ),
-            _line('📓 日记', '${c['journal_entry_count'] ?? 0} 篇'),
+            _line('📓 备忘录', '${c['journal_entry_count'] ?? 0} 篇'),
             const SizedBox(height: 10),
             const Text('支出分类占比', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
             const SizedBox(height: 6),

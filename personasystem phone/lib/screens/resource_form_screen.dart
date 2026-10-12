@@ -357,9 +357,21 @@ class _ResourceFormScreenState extends State<ResourceFormScreen> {
 
       case 'datetime': {
         final val = _values[key] as String?;
+        // 2026-10-12: 跟 'time' case 同一个道理——存的是带时区的完整时间戳 (比如这次新加的
+        // tasks.completed_at)，不转成本地时间直接显示会看起来"差了 8 小时"，之前这里漏了
+        // .toLocal() (只有 'time' case 当初修过)。
         DateTime? parsed;
         if (val != null) {
-          parsed = DateTime.tryParse(val.replaceFirst(' ', 'T'));
+          final raw = DateTime.tryParse(val.replaceFirst(' ', 'T'));
+          parsed = raw?.toLocal();
+        }
+        if (f.readonly) {
+          return ListTile(
+            enabled: false,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: AppColors.border)),
+            title: Text(labelText),
+            subtitle: Text(parsed != null ? DateFormat('yyyy-MM-dd HH:mm').format(parsed) : '未选择'),
+          );
         }
         return ListTile(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: AppColors.border)),

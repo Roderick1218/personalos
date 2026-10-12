@@ -437,7 +437,7 @@ async function submitAdminUserForm(id) {
 async function deleteAdminUser(id) {
   const user = ADMIN_USERS_CACHE.find(u => u.id === id);
   const username = user ? user.username : `#${id}`;
-  if (!confirm(`确定要删除用户「${username}」吗？\n\n这会永久删除这个账号名下所有模块的所有数据 (任务/交易/日记...全部)，不是只删账号本身，不能恢复。`)) return;
+  if (!confirm(`确定要删除用户「${username}」吗？\n\n这会永久删除这个账号名下所有模块的所有数据 (任务/交易/备忘录...全部)，不是只删账号本身，不能恢复。`)) return;
   try {
     await api({ action: 'admin_delete_user', id });
   } catch (e) {
@@ -535,7 +535,7 @@ async function renderReportsPage() {
     <div class="toolbar">
       <div class="page-title" style="margin-bottom:0;">📑 报表汇总</div>
     </div>
-    <div class="resource-note">💡 选一个期间生成报表：收支/分类占比/前5大支出/薪资/EPF供款/订阅扣费/期末各账户余额，外加习惯打卡次数和日记篇数。同一个期间可以重新生成覆盖最新数字，不会重复堆一份。</div>
+    <div class="resource-note">💡 选一个期间生成报表：收支/分类占比/前5大支出/薪资/EPF供款/订阅扣费/期末各账户余额，外加习惯打卡次数和备忘录篇数。同一个期间可以重新生成覆盖最新数字，不会重复堆一份。</div>
     <div class="card" style="max-width:640px;">
       <h3>生成新报表</h3>
       <div style="display:flex; gap:12px; flex-wrap:wrap;">
@@ -677,11 +677,11 @@ function reportDetailHtml(c) {
         ${buildDonutHtml(c.category_breakdown || [], '期间支出', '这段期间没有支出记录')}
       </div>
       <div>
-        <h4>薪资 / EPF / 订阅 / 日记</h4>
+        <h4>薪资 / EPF / 订阅 / 备忘录</h4>
         <p>💼 薪资收入：RM ${Number(c.salary_received || 0).toFixed(2)}</p>
         <p>🏦 EPF 供款：员工 RM ${Number(epf.employee || 0).toFixed(2)} · 雇主 RM ${Number(epf.employer || 0).toFixed(2)} · 自愿 RM ${Number(epf.additional || 0).toFixed(2)}</p>
         <p>🔄 订阅扣费：${subs.count || 0} 笔，共 RM ${Number(subs.total || 0).toFixed(2)}</p>
-        <p>📓 日记：${c.journal_entry_count || 0} 篇</p>
+        <p>📓 备忘录：${c.journal_entry_count || 0} 篇</p>
       </div>
       <div>
         <h4>期末账户余额 (合计 RM ${Number(c.total_balance_at_period_end || 0).toFixed(2)})</h4>
@@ -1048,7 +1048,7 @@ async function renderDashboard() {
           </button>
           <button class="quick-action-btn" onclick='openForm("journal_entries", null, {})'>
             <span class="quick-action-icon" style="background:var(--icon-orange-bg);color:var(--icon-orange-fg);">📓</span>
-            <span class="quick-action-label">写日记</span>
+            <span class="quick-action-label">写备忘录</span>
           </button>
         </div>
       </div>
@@ -1081,7 +1081,7 @@ async function renderDashboard() {
           : '<p class="empty">今天还没记录 (手机 App 会自动同步步数)</p>'}
       </div>
       <div class="card">
-        <h3>📓 今日日记</h3>
+        <h3>📓 今日备忘录</h3>
         ${d.journal_today ? `<p>${escapeHtml((d.journal_today.content || '').slice(0, 80))}...</p>` : '<p class="empty">今天还没写</p>'}
       </div>
     </div>
@@ -1529,6 +1529,21 @@ async function renderResourcePage(resourceName) {
         return `<td>${val}</td>`;
       } else if (f.type === 'color') {
         return `<td>${val ? `<span class="color-dot" style="background:${escapeHtml(val)};"></span>${escapeHtml(val)}` : ''}</td>`;
+      } else if (f.type === 'textarea') {
+        // 2026-10-12: 普通 <td> 默认会把存好的 \n 换行通通吃掉、挤成一整段——内容本身其实
+        // 好好分好段落了 (比如备忘录里的 \n\n)，只是表格显示把换行吞掉，看起来才像一整坨文字
+        // 挤在一起。加 white-space:pre-wrap 让已经存在的换行真的显示出来，长行照样会自动换行，
+        // 不会因此撑出横向卷动。
+        return `<td style="white-space:pre-wrap;">${escapeHtml(val ?? '')}</td>`;
+      } else if (f.type === 'datetime') {
+        // 2026-10-12: 跟网站端表单那边不一样，这个表格列表之前完全没转时区，存的是 UTC
+        // 时间戳就直接原样显示 (比如 "2026-10-12T07:00:00+00:00")，看起来比实际晚/早了 8 小时。
+        // 这次新加 tasks.created_at/completed_at 会用到这个栏位类型，顺手一起修掉，
+        // 提醒 (reminders) 的 remind_at 列表显示也会跟着一起修对。
+        if (val) {
+          const d = new Date(val);
+          if (!isNaN(d)) val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        }
       } else if (f.type === 'boolean') val = (val == 1) ? '✅' : '—';
       else if (f.type === 'tags') { val = parseTagsField(val).join(', '); }
       else if (f.type === 'select' && f.options && f.options[val]) val = f.options[val];
@@ -1625,11 +1640,32 @@ const DELETE_CONSEQUENCE = {
 };
 
 async function deleteRow(resourceName, id) {
-  const extra = DELETE_CONSEQUENCE[resourceName];
-  const msg = extra ? `确定要删除这条记录吗？\n\n${extra}` : '确定要删除这条记录吗？';
-  if (!confirm(msg)) return;
+  // 2026-10-12: bank_accounts 如果有薪资记录(salary_payments)挂在底下，数据库会用 ON DELETE
+  // RESTRICT 挡住删除 (故意设计，避免发薪历史记录"忘了付去哪个账户")。这里先主动查一次，
+  // 有的话换一个更明确的警告 (讲清楚会连 EPF/SOCSO/EIS 供款记录、自动生成的交易一起永久删掉)，
+  // 用户确认了才带 cascade_salary_payments 标记重新呼叫，比直接让原始外键错误丢给用户好。
+  let cascadeSalaryPayments = false;
+  if (resourceName === 'bank_accounts') {
+    const { data: sps } = await api({
+      resource: 'salary_payments', action: 'list',
+      filters: [{ field: 'bank_account_id', op: 'eq', value: id }],
+    });
+    if (sps && sps.length > 0) {
+      const ok = confirm(
+        `这个账户有 ${sps.length} 笔薪资记录关联，无法直接删除。\n\n` +
+        `如果继续，会连同这 ${sps.length} 笔薪资记录 (含对应的 EPF/SOCSO/EIS 供款记录、自动生成的收入交易) 一起永久删除，无法恢复。确定要继续吗？`
+      );
+      if (!ok) return;
+      cascadeSalaryPayments = true;
+    }
+  }
+  if (!cascadeSalaryPayments) {
+    const extra = DELETE_CONSEQUENCE[resourceName];
+    const msg = extra ? `确定要删除这条记录吗？\n\n${extra}` : '确定要删除这条记录吗？';
+    if (!confirm(msg)) return;
+  }
   try {
-    await api({ resource: resourceName, action: 'delete', id });
+    await api({ resource: resourceName, action: 'delete', id, cascade_salary_payments: cascadeSalaryPayments });
   } catch (e) {
     alert(e.message);
     return;
@@ -1954,8 +1990,19 @@ function renderField(key, f, value) {
       const timePart = (value || '').includes(' ') ? (value || '').split(' ')[1] : (value || '');
       return `<div class="field">${label}<input type="time" data-field="${key}" value="${escapeHtml(timePart.slice(0,5))}"></div>`;
     }
-    case 'datetime':
-      return `<div class="field">${label}<input type="datetime-local" data-field="${key}" value="${escapeHtml((value||'').replace(' ','T').slice(0,16))}"></div>`;
+    case 'datetime': {
+      // 2026-10-12: 目前只有 tasks.created_at/completed_at 用这个类型，两个都是 readonly——
+      // 存的是带时区的 UTC 时间戳，直接塞进 datetime-local 输入框 (本地时间控件) 之前要先转成
+      // 本地时间，不然显示出来会跟实际差 8 小时。
+      let localVal = '';
+      if (value) {
+        const d = new Date(value);
+        if (!isNaN(d)) {
+          localVal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        }
+      }
+      return `<div class="field">${label}<input type="datetime-local" data-field="${key}" value="${escapeHtml(localVal)}" ${f.readonly ? 'disabled' : ''}></div>${f.readonly ? '<p class="empty" style="margin-top:-8px;">系统自动记录，不能手动改</p>' : ''}`;
+    }
     case 'tags': {
       const display = parseTagsField(value).join(', ');
       return `<div class="field">${label}<input type="text" placeholder="${f.placeholder ? escapeHtml(f.placeholder) : '逗号分隔，如：读书, 效率'}" data-field="${key}" value="${escapeHtml(display)}"></div>`;
