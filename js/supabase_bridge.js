@@ -1,8 +1,5 @@
-// 2026-09-28: 网站从"打 api.php"改成"直接连 Supabase" —— 原因见 project 记录，
-// 简单说是 api.php 这个中间人不管放哪 (这台电脑/InfinityFree) 都有各自的死结，
-// Supabase 本身就是设计给前端直连的服务，且已经把登入系统换成 Supabase Auth，
-// RLS (auth.uid() = user_id) 会自动帮忙做到"每个人只能看到自己的东西"，
-// 不再需要 api.php 手动加 WHERE user_id = ? 这层。
+// 网站不再打 api.php，直接连 Supabase。登入走 Supabase Auth，数据隔离靠 RLS
+// (auth.uid() = user_id)，数据库自己挡，不用每个查询手动加 WHERE user_id = ?。
 //
 // 这个文件只做一件事: 提供跟原本 api()/rawApi() 完全一样的呼叫方式 (同样的
 // {resource, action, ...} 参数形状，同样回传 {ok, data/...}) 但内部改成呼叫 Supabase，
@@ -14,8 +11,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 2026-10-01: 新账号用真实邮箱注册/登录。旧账号仍是用户名拼假邮箱
-// (@personalos.local / @personalos.app)，登录时若输入不含 @ 的用户名会自动回退。
+// 新账号用真实邮箱注册登录；旧账号是用户名拼假邮箱，登录时输入不含 @ 的用户名会自动回退。
 const USER_EMAIL_DOMAIN = '@personalos.app';
 const LEGACY_USER_EMAIL_DOMAIN = '@personalos.local';
 
@@ -413,13 +409,7 @@ function nextReminderTime(fromDateTime, rule, interval, unit) {
 
 // reminders 特殊规则: 表单只填"几点" (HH:MM)，这里自动算好拼回完整的 remind_at。
 // 新增: 这个点今天还没过就用今天，过了就用明天。编辑: 保留原本这条记录的日期，只换时间。
-//
-// 2026-09-29 修复: 之前拼出来的字串没带时区 (比如 "2026-09-29 15:56:00")，Supabase/Postgres
-// 收到这种没时区标示的字串，会当作 UTC 时间存——用户在马来西亚时间选的"15:56"，实际存进去、
-// 之后触发的时间会变成 UTC 15:56 = 马来西亚时间 23:56，整整晚了 8 小时触发，用户设的提醒
-// 因此"感觉上没反应"。这里在最终字串明确加上 "+08:00" (马来西亚时区)，Postgres 才会正确
-// 换算成对应的 UTC 时刻存起来。"今天过了没"这个判断也要用同样明确带时区的方式比，
-// 不能直接拿马来西亚时钟数字去跟 UTC 的 now 比字串大小 (两边单位不一样，比了也不准)。
+// 字串一定要带 +08:00，不然 Postgres 会当 UTC 存，提醒会晚 8 小时才触发。
 async function applyReminderTimeRule(resource, action, id, data) {
   if (resource !== 'reminders' || !data || !/^\d{2}:\d{2}$/.test(String(data.remind_at || ''))) return data;
   const time = data.remind_at;
@@ -568,8 +558,7 @@ async function buildDashboard(userId) {
   out.auto_matured_fixed_deposits = fdAuto.matured;
   out.auto_generate_skipped_fixed_deposits = fdAuto.skipped;
 
-  // 2026-09-29: 状态简化成只有 未完成(todo)/已完成(done) 两种，仪表盘改成显示全部未完成的任务
-  // (不再只挑"今天"的)
+  // 状态只有 todo/done 两种，仪表盘显示全部未完成任务，不挑"今天"的。
   const { data: tasksToday } = await sb.from('tasks').select('*').eq('user_id', userId).eq('status', 'todo').order('priority', { ascending: false }).order('id', { ascending: false });
   out.tasks_today = tasksToday || [];
 
@@ -1064,8 +1053,7 @@ const SupabaseBridge = {
           if (v === undefined) return { ok: false, error: `字段 ${col} 格式不对` };
         }
         insertData = await applyReminderTimeRule(resource, 'create', null, insertData);
-        // 2026-10-12: 任务新增时如果直接就选了"已完成"状态 (少见但表单上选得到)，顺手盖一个完成时间，
-        // 不留一个"状态是已完成、完成时间却是空的"的奇怪状态。
+        // 新建就直接选"已完成"的话，顺手盖完成时间，别留一个状态已完成但时间是空的记录。
         if (resource === 'tasks' && insertData.status === 'done') insertData.completed_at = new Date().toISOString();
         const { data, error } = await sb.from(resource).insert(insertData).select().single();
         if (error) throw error;
@@ -1083,11 +1071,8 @@ const SupabaseBridge = {
         }
         updateData = await applyReminderTimeRule(resource, 'update', payload.id, updateData);
 
-        // 2026-10-12: 任务的"完成时间"要跟着状态自动走，不能让用户自己填——只有状态真的从
-        // "非已完成"变成"已完成"那一刻才盖上当下时间；反过来从"已完成"改回"未完成"就清空，
-        // 不留一个跟当前状态对不上的旧完成时间。只比对 status 真的有送来改的情况，单纯改标题/
-        // 描述之类没动到 status 的一般编辑不会动到这个栏位 (不然每次随便改点什么都会把完成时间
-        // 刷新成"刚刚"，变成完全不准)。
+        // 完成时间跟着状态走，不让用户自己填：状态变成已完成才盖时间，改回未完成就清空。
+        // 只在 status 真的有送来改的时候才动这个栏位，不然随便改个标题也会把完成时间刷新。
         if (resource === 'tasks' && 'status' in updateData) {
           const { data: existingTask } = await sb.from('tasks').select('status').eq('id', payload.id).maybeSingle();
           const wasDone = existingTask?.status === 'done';
@@ -1134,11 +1119,8 @@ const SupabaseBridge = {
           const { data: sp } = await sb.from('salary_payments').select('transaction_id').eq('id', payload.id).maybeSingle();
           if (sp && sp.transaction_id) await sb.from('transactions').delete().eq('id', sp.transaction_id);
         }
-        // 2026-10-12: bank_accounts 被 salary_payments.bank_account_id 用 ON DELETE RESTRICT 挡住
-        // (故意的设计，避免发薪历史记录"忘了是付去哪个账户")，正常删除会直接收到数据库原始的
-        // 外键错误。用户明确要求"连同薪资记录一起删"时，前端会先弹确认、带 cascade_salary_payments
-        // 标记重新呼叫——这里才真的按 salary_payments 的单笔删除同一套逻辑 (先清掉自动生成的那笔
-        // 交易) 逐一删掉，EPF/SOCSO/EIS 供款记录本来就是 ON DELETE CASCADE，不用另外处理。
+        // bank_accounts 被薪资记录的外键挡住删除，前端确认过后会带 cascade 标记重新呼叫，
+        // 这里才真的按单笔删除同一套逻辑清掉薪资记录；EPF/SOCSO/EIS 本来就是级联删除，不用管。
         if (resource === 'bank_accounts' && payload.cascade_salary_payments) {
           const { data: sps } = await sb.from('salary_payments').select('id, transaction_id').eq('bank_account_id', payload.id);
           for (const sp of (sps || [])) {

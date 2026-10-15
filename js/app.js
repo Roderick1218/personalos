@@ -838,8 +838,7 @@ async function renderDashboard() {
     </div>
   `).join('') || '<p class="empty">还没有习惯，去"习惯"页面加一个吧</p>';
 
-  // 2026-09-29: 拿掉左右滑动手势 (跟按钮抢点击，会把"✓ 完成"按钮的点击吃掉)，
-  // 只保留点按钮完成这一种操作方式，用户明确说不要滑动了。
+  // 不用滑动手势，会跟"✓ 完成"按钮抢点击，只留按钮这一种操作方式。
   const taskRows = d.tasks_today.map(t => `
     <div class="habit-row" style="border-left:4px solid ${PRIORITY_COLOR[t.priority] || '#9CA3AF'};padding-left:10px;">
       <span>${escapeHtml(t.title)} <span class="badge" style="background:${PRIORITY_COLOR[t.priority]}22;color:${PRIORITY_COLOR[t.priority]};">${PRIORITY_LABEL[t.priority] || t.priority}</span></span>
@@ -1530,16 +1529,10 @@ async function renderResourcePage(resourceName) {
       } else if (f.type === 'color') {
         return `<td>${val ? `<span class="color-dot" style="background:${escapeHtml(val)};"></span>${escapeHtml(val)}` : ''}</td>`;
       } else if (f.type === 'textarea') {
-        // 2026-10-12: 普通 <td> 默认会把存好的 \n 换行通通吃掉、挤成一整段——内容本身其实
-        // 好好分好段落了 (比如备忘录里的 \n\n)，只是表格显示把换行吞掉，看起来才像一整坨文字
-        // 挤在一起。加 white-space:pre-wrap 让已经存在的换行真的显示出来，长行照样会自动换行，
-        // 不会因此撑出横向卷动。
+        // 普通 <td> 不认换行符，加 pre-wrap 让存好的段落 (比如备忘录) 照样分段显示。
         return `<td style="white-space:pre-wrap;">${escapeHtml(val ?? '')}</td>`;
       } else if (f.type === 'datetime') {
-        // 2026-10-12: 跟网站端表单那边不一样，这个表格列表之前完全没转时区，存的是 UTC
-        // 时间戳就直接原样显示 (比如 "2026-10-12T07:00:00+00:00")，看起来比实际晚/早了 8 小时。
-        // 这次新加 tasks.created_at/completed_at 会用到这个栏位类型，顺手一起修掉，
-        // 提醒 (reminders) 的 remind_at 列表显示也会跟着一起修对。
+        // 存的是 UTC 时间戳，列表直接显示会比实际时间晚/早 8 小时，转成本地时间再显示。
         if (val) {
           const d = new Date(val);
           if (!isNaN(d)) val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -1640,10 +1633,8 @@ const DELETE_CONSEQUENCE = {
 };
 
 async function deleteRow(resourceName, id) {
-  // 2026-10-12: bank_accounts 如果有薪资记录(salary_payments)挂在底下，数据库会用 ON DELETE
-  // RESTRICT 挡住删除 (故意设计，避免发薪历史记录"忘了付去哪个账户")。这里先主动查一次，
-  // 有的话换一个更明确的警告 (讲清楚会连 EPF/SOCSO/EIS 供款记录、自动生成的交易一起永久删掉)，
-  // 用户确认了才带 cascade_salary_payments 标记重新呼叫，比直接让原始外键错误丢给用户好。
+  // bank_accounts 底下挂着薪资记录时数据库会拒绝删除 (故意设计，避免发薪记录丢了账户出处)。
+  // 先查一次有没有关联记录，有就换成讲清楚后果的警告，确认了才带 cascade 标记重新删。
   let cascadeSalaryPayments = false;
   if (resourceName === 'bank_accounts') {
     const { data: sps } = await api({
@@ -1991,9 +1982,7 @@ function renderField(key, f, value) {
       return `<div class="field">${label}<input type="time" data-field="${key}" value="${escapeHtml(timePart.slice(0,5))}"></div>`;
     }
     case 'datetime': {
-      // 2026-10-12: 目前只有 tasks.created_at/completed_at 用这个类型，两个都是 readonly——
-      // 存的是带时区的 UTC 时间戳，直接塞进 datetime-local 输入框 (本地时间控件) 之前要先转成
-      // 本地时间，不然显示出来会跟实际差 8 小时。
+      // 存的是 UTC 时间戳，塞进 datetime-local (本地时间控件) 前先转本地时间，不然会差 8 小时。
       let localVal = '';
       if (value) {
         const d = new Date(value);

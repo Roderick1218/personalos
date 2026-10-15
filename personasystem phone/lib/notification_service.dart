@@ -6,16 +6,10 @@ import 'api_service.dart';
 import 'supabase_bridge.dart' show maybeAdvanceRecurringReminder;
 import 'main.dart' show kSupabaseUrl, kSupabaseAnonKey;
 
-/// 2026-09-30 重要修正: 原本"提醒"是用 flutter_local_notifications 的 zonedSchedule() 提前排到
-/// 系统 AlarmManager，时间到了由系统闹钗 + 一个背景 receiver 重建通知贴出来——实测在这台设备上
-/// 这条路径完全不工作 (闹钟本身每次都准时触发，但触发后通知从来贴不出来，换了好几种排查方向都
-/// 没用；反而直接 .show() 立即触发的通知完全正常，证明不是系统拦这个 App 的通知，是 zonedSchedule
-/// 那条排程机制本身在这台机器上失效)。改法: 交给 step_service.dart 里那个本来就每 30 秒跑一次、
-/// 已经证实稳定的前台服务心跳去轮询"有没有到期的提醒"，到了就直接呼叫 .show() (立即触发那条已确认
-/// 可靠的路径)——牺牲一点点精确度 (最多晚 30 秒)，换来真正会响。
-/// 2026-09-30 再修正: 订阅续费/生日提醒原本也是"只有 App 打开那一刻检查一次"，同一类可靠性问题
-/// (那天没开 App 就整个错过)，现在也一起搬进 step_service.dart 的背景心跳去查 (见那边的
-/// _checkSubscriptionsAndBirthdays())。这个文件现在只剩通知初始化 + 点击"✓已提醒"按钮的回应处理。
+/// 提醒原本用 zonedSchedule() 排到系统 AlarmManager，这台设备上这条路径不工作 (闹钟准时触发，
+/// 但通知贴不出来)。改成交给 step_service.dart 里那个已经证实稳定的 30 秒心跳去轮询到期提醒，
+/// 直接 .show()。订阅续费/生日提醒同理也搬过去了 (见 _checkSubscriptionsAndBirthdays())。
+/// 这个文件现在只剩通知初始化 + 点击"✓已提醒"按钮的回应处理。
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
   static bool _initialized = false;

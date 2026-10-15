@@ -2,10 +2,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// 2026-09-28: App 端也跟网站端(js/supabase_bridge.js)一样，从"打 api.php"改成
-/// "直接连 Supabase"——原因跟网站端一致: api.php 这个中间人不管放哪 (这台电脑/InfinityFree)
-/// 都有各自的死结，Supabase 本身就是设计给前端(含手机 App)直连的服务，RLS 会自动帮忙做到
-/// "每个人只能看到自己的东西"，不用再靠这台电脑的 Apache/Cloudflare Tunnel。
+/// App 端也跟网站端一样直接连 Supabase，不打 api.php，数据隔离靠 RLS。
 /// 这个文件是网站端 js/supabase_bridge.js 逐句翻译成 Dart 的版本，算法/注释含义都一样。
 /// (没有自己另外定义 AuthException —— supabase_flutter 套件本身就有一个同名的
 /// package:gotrue AuthException，直接沿用它，session 失效时用它来通知 main.dart
@@ -498,7 +495,7 @@ Future<Map<String, dynamic>> buildDashboard(String userId) async {
   out['auto_matured_fixed_deposits'] = fdAuto['matured'];
   out['auto_generate_skipped_fixed_deposits'] = fdAuto['skipped'];
 
-  // 2026-09-29: 状态简化成只有 未完成(todo)/已完成(done) 两种，仪表盘改成显示全部未完成的任务
+  // 状态只有 todo/done 两种，仪表盘显示全部未完成任务。
   out['tasks_today'] = await sb.from('tasks').select('*').eq('user_id', userId).eq('status', 'todo').order('priority', ascending: false).order('id', ascending: false);
 
   final habits = await sb.from('habits').select('*').eq('user_id', userId).eq('is_active', true).order('id');
@@ -652,10 +649,8 @@ Future<void> advanceDueReminders(String userId) async {
   }
 }
 
-// 2026-09-29 修复: 之前拼出来的字串没带时区 (比如 "2026-09-29 15:56:00")，Supabase/Postgres
-// 收到这种没时区标示的字串会当作 UTC 时间存——用户在马来西亚时间选的"15:56"实际会变成
-// UTC 15:56 = 马来西亚时间 23:56，晚了 8 小时才触发。这里明确加上 "+08:00"，
-// 并且"今天过了没"也要用同样明确带时区的方式比 (不能直接拿本地时钟数字去跟 UTC 的 now 比)。
+// 字串一定要带 +08:00，不然 Postgres 会当 UTC 存，提醒会晚 8 小时才触发。
+// "今天过了没"也要用同样明确带时区的方式比，不能直接拿本地时钟数字跟 UTC 的 now 比。
 Future<Map<String, dynamic>> applyReminderTimeRule(String resource, String action, String? id, Map<String, dynamic> data) async {
   final remindAt = data['remind_at']?.toString() ?? '';
   if (resource != 'reminders' || !RegExp(r'^\d{2}:\d{2}$').hasMatch(remindAt)) return data;

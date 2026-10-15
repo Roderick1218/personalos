@@ -145,11 +145,8 @@ class ResourceListScreenState extends State<ResourceListScreen> {
     return confirm == true;
   }
 
-  // 2026-10-12: bank_accounts 被 salary_payments.bank_account_id 用 ON DELETE RESTRICT 挡住
-  // (故意设计，避免发薪历史记录"忘了付去哪个账户")。跟网站端同一套处理——先查一次有没有关联的
-  // 薪资记录，有的话换一个更明确的警告 (讲清楚会连 EPF/SOCSO/EIS 供款记录、自动生成的交易一起
-  // 永久删掉)，确认了才带 cascade 标记真的删除；没有关联就走原本的普通确认框。
-  // 回传 null 代表取消不删；非 null 代表要删，布尔值本身就是要不要带 cascade 标记。
+  // bank_accounts 被薪资记录的外键挡住删除，跟网站端同一套处理：先查关联笔数，有就换成
+  // 讲清楚后果的警告，确认了才带 cascade 标记删除。回传 null 代表取消，非 null 代表要删。
   Future<bool?> _confirmBankAccountDelete(String id) async {
     final sps = await ApiService.list('salary_payments', filters: {'bank_account_id': id});
     if (sps.isEmpty) return (await _confirmDelete()) ? false : null;
@@ -221,8 +218,7 @@ class ResourceListScreenState extends State<ResourceListScreen> {
     return parts.join(' · ');
   }
 
-  // 2026-10-12: 备忘录详情——只读展示，换行照原样保留 (Text 本来就会把 \n 当真的换行显示，
-  // 不像网站那边普通 <td> 需要额外加 white-space:pre-wrap 才行)。"编辑"按钮才真的进表单。
+  // 备忘录详情，只读展示，换行照原样保留 (Text 本来就认 \n)，"编辑"按钮才真的进表单。
   Future<void> _showJournalDetail(Map<String, dynamic> row) async {
     final tagId = row['tag_id'];
     final tagLabel = (tagId != null) ? AppState.fkLabel('tags', tagId) : null;
@@ -492,9 +488,8 @@ class ResourceListScreenState extends State<ResourceListScreen> {
       title: Text(widget.resourceName == 'daily_metrics' ? title : title),
       subtitle: Text(_subtitle(row)),
       onTap: () async {
-        // 2026-10-12: 备忘录的内容 (textarea) 本来就不会出现在列表 subtitle 里 (太长)，之前
-        // 点一下整条就直接进编辑模式——想看内容结果常常手滑改到东西。改成先弹一个只读的内容框，
-        // 真的要改才点里面的"编辑"按钮进表单。其他资源维持原本"点了就是编辑"的行为不变。
+        // 备忘录内容太长不会出现在列表 subtitle，点一下先弹只读详情，避免手滑改到内容；
+        // 其他资源还是点了就进编辑。
         if (widget.resourceName == 'journal_entries') {
           await _showJournalDetail(row);
           return;

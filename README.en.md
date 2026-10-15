@@ -28,17 +28,23 @@ Last major update: **2026-10-12**.
 
 ---
 
-## 0.1 Summary of the 2026-10-12 update round
+## 0.1 What changed this round
 
-- **Full UI redesign (v6.0)**: based on a design reference the user provided, the primary color moved from a single neon-cyan to a blue→cyan gradient plus distinct colors per module, corner radii were substantially increased for a softer look, and the dashboard header became a glassy, glow-lit welcome banner. Pure CSS change (`css/style.css`); no functional logic touched.
-- **Fixed a background-service login race condition**: the app's background step-tracking/reminder service and the main app each independently auto-refresh their login token, and the two occasionally raced each other, which could force the user to log in again. Fixed by having the background service piggyback on its already-reliable 30-second heartbeat to check and refresh its own session, which greatly reduces the odds of a collision (`step_service.dart`).
-- **Tasks now auto-record "created at" / "completed at"**: `tasks.created_at` / `completed_at`. The completion timestamp is stamped only when status actually transitions to "done", and cleared when reverted to "not done"; editing unrelated fields (title, description, etc.) never touches it.
-- **Tags became module-scoped**: tags on reminders/memos/contacts moved from free-text to the same dropdown-selection pattern already used for tasks/finance (scoped by `tags.module`). This also surfaced and fixed two real bugs — the app's and the website's own independent instances of "`fk_filter` never applied" and "`fkCache` never invalidated".
-- **"日记" (Journal) renamed to "备忘录" (Memo)**: a display-name/copy-only change; the underlying table name `journal_entries` is unchanged. Also fixed the memo list display (missing `white-space: pre-wrap`, which collapsed existing paragraph breaks), and the app now shows a read-only preview first, only entering edit mode when you tap "Edit".
-- **Bank account delete protection**: deleting an account with linked salary payment records now shows an explicit warning ("this will permanently delete N linked salary records, including their EPF/SOCSO/EIS contribution records and auto-generated transactions") before cascading, instead of surfacing a raw database foreign-key error.
-- **Timezone display fixes**: several datetime fields in the website's list views and the app's edit forms were missing `.toLocal()` conversion, showing times 8 hours off; fixed as part of this same round.
+Recolored the UI, blue-to-cyan gradient instead of the old neon-cyan, bigger corner radii too. Pure CSS, logic untouched.
 
-**After editing `config_resources.php` you must regenerate `config_resources.json`** (one copy for the website, one copy in the App's `assets/`) for anything to actually take effect — editing the `.php` file alone changes nothing. This tripped us up once this round; see Section 7 for the exact steps.
+The app's background service and the main app each auto-refresh their own login session, and once in a while they'd race and force a re-login. Fixed by having the background service piggyback on its already-running 30-second heartbeat to refresh itself instead.
+
+Tasks now record a created time and a completed time. The completed time gets stamped when status flips to done and cleared when it flips back — editing the title or description doesn't touch it.
+
+Tags on reminders, memos, and contacts used to be free text; now they're a dropdown like tasks already had. Fixed a couple of bugs along the way — both the app and the website had their own copy of "the dropdown filter never applied" and "the cache never refreshed."
+
+"Journal" is now called "Memos" — just the name, the table is still `journal_entries`. The memo list wasn't rendering line breaks, that's fixed. The app now shows the content read-only first; you tap Edit to actually change it, so you don't fat-finger an edit by accident.
+
+Deleting a bank account with salary records attached used to throw a raw database error. Now it tells you up front what would get deleted and only proceeds once you confirm.
+
+A few datetime fields in the list views and edit forms were missing a timezone conversion and showed times 8 hours off. Fixed.
+
+After editing `config_resources.php`, regenerate `config_resources.json` (website copy and the App's `assets/` copy) or nothing changes — editing the `.php` alone does nothing. Tripped on this once this round; see Section 7.
 
 ---
 

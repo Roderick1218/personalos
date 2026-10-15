@@ -4,9 +4,8 @@ import 'supabase_bridge.dart' as bridge;
 
 export 'package:supabase_flutter/supabase_flutter.dart' show AuthException;
 
-/// 2026-09-28: App 直接连 Supabase (跟网站端 js/supabase_bridge.js 同一套做法)，不再打
-/// api.php，不再需要这台电脑的 Apache/Cloudflare Tunnel。真正的实现都在 supabase_bridge.dart
-/// 里，这个 class 只是保留原本的方法签名，让 main.dart/screens 完全不用改一行。
+/// App 直接连 Supabase，不再打 api.php。真正的实现都在 supabase_bridge.dart 里，
+/// 这个 class 只是保留原本的方法签名，main.dart/screens 不用跟着改。
 class ApiService {
   static Future<Map<String, dynamic>?> login(String identifier, String password) async {
     try {
@@ -204,9 +203,7 @@ class ApiService {
     }
     updateData = await applyReminderTimeRule(resource, 'update', id, updateData);
 
-    // 2026-10-12: 跟网站端 js/supabase_bridge.js 同一套逻辑——任务的"完成时间"跟着状态自动走，
-    // 只有状态真的从"非已完成"变成"已完成"才盖上当下时间，改回"未完成"就清空；没动到 status
-    // 的一般编辑不受影响，不会把完成时间刷新成"刚刚"。
+    // 完成时间跟状态走 (跟网站端同一套逻辑)：状态变已完成才盖时间，改回未完成就清空。
     if (resource == 'tasks' && updateData.containsKey('status')) {
       final existingTask = await sb.from('tasks').select('status').eq('id', id).maybeSingle();
       final wasDone = existingTask?['status'] == 'done';
@@ -237,10 +234,7 @@ class ApiService {
       final sp = await sb.from('salary_payments').select('transaction_id').eq('id', id).maybeSingle();
       if (sp != null && sp['transaction_id'] != null) await sb.from('transactions').delete().eq('id', sp['transaction_id']);
     }
-    // 2026-10-12: 跟网站端 js/supabase_bridge.js 同一套逻辑——bank_accounts 被
-    // salary_payments.bank_account_id 用 ON DELETE RESTRICT 挡住 (故意设计，避免发薪历史记录
-    // "忘了付去哪个账户")。调用端 (resource_list_screen.dart) 先查出关联笔数、明确警告用户
-    // 会连同薪资记录一起永久删除，确认了才带 cascadeSalaryPayments=true 走到这里。
+    // bank_accounts 被薪资记录的外键挡住删除，调用端先警告用户再带 cascade 标记进来。
     if (resource == 'bank_accounts' && cascadeSalaryPayments) {
       final sps = await sb.from('salary_payments').select('id, transaction_id').eq('bank_account_id', id);
       for (final sp in (sps as List)) {

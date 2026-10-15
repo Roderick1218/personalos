@@ -16,8 +16,7 @@ import 'screens/backup_screen.dart';
 
 // v2/v3 规范: 只保留这份文档定义的核心模块，其余先从导航隐藏 (数据库表和数据都还在，
 // 网站端 js/app.js 里也有一份一样的 CORE_VISIBLE，两边要保持同步)。
-// 2026-09-25 跟网站端重新对齐一次: 补上 reminders/reports/fixed_deposits 这几个后来才加的模块
-// (手机版之前一直停留在多用户登录/薪资/EPF 之前的旧版本，跟网站差了好几轮更新)。
+// 跟网站端对齐: reminders/reports/fixed_deposits 这几个是后来才加的模块。
 const Set<String> kCoreVisibleResources = {
   'tasks', 'projects', 'project_categories', 'habits', 'habit_logs',
   'categories', 'transactions', 'subscriptions', 'journal_entries', 'contacts',
@@ -26,8 +25,8 @@ const Set<String> kCoreVisibleResources = {
   'reminders', 'reports', 'fixed_deposits', 'daily_metrics',
 };
 
-// 2026-09-28: 跟网站端一样直接连 Supabase，不再打 api.php —— 不用管这台电脑开不开机，
-// 只要手机有网络就能用 (anon key 是公开的没关系，安全性靠 Supabase 的 RLS 权限规则)。
+// 跟网站端一样直接连 Supabase，不打 api.php，手机有网络就能用，不用管这台电脑开不开机。
+// anon key 公开没关系，安全性靠 Supabase 的 RLS 权限规则。
 const String kSupabaseUrl = 'https://xpbtyfattbqsaasmokoy.supabase.co';
 const String kSupabaseAnonKey =
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhwYnR5ZmF0dGJxc2Fhc21va295Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyMzQ3MzEsImV4cCI6MjEwNTgxMDczMX0.wzP8YkevvVGi4aEtyMg7TKyzfEsjJPLieyh2wTICt6U';
@@ -193,9 +192,7 @@ class _HomeShellState extends State<HomeShell> {
 
   static const List<String> _tabTitles = ['今日仪表盘', '任务', '习惯', '财务记账'];
   // 按功能分类，不按使用频率分 (跟网站端 js/app.js 的 GROUP_LABELS 保持一致)
-  // 2026-09-29: 补上 'system' 分组——之前漏了这组，导致 group='system' 的 reminders
-  // (通用提醒) 虽然在 kCoreVisibleResources 里，却因为它的分组从没被遍历到，
-  // 从来没有在抽屉导航里显示过 (网站端 js/app.js 的 GROUP_ORDER 一直都有这组，只有手机版漏了)。
+  // 'system' 分组别漏掉，不然 group='system' 的 reminders 不会出现在抽屉导航里。
   static const Map<String, String> _groupLabels = {'core': '核心', 'finance': '财务', 'personal': '个人', 'tools': '工具', 'system': '系统'};
   static const List<String> _groupOrder = ['core', 'finance', 'personal', 'tools', 'system'];
 

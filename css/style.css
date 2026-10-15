@@ -1,6 +1,5 @@
-/* ================= v6.0 视觉重设计 (2026-10-12) =================
-   参考用户提供的 anben.html 设计参考稿重做: 深色玻璃拟态 (Glassmorphism) + 蓝色系主色调 +
-   各模块各自配色 (偏专业 SaaS 风)，取代原本 v5.0 的单一荧光青色 cyberpunk 风格。
+/* ================= v6.0 视觉重设计 =================
+   深色玻璃拟态 + 蓝色系主色调 + 各模块各自配色，换掉上一版单一荧光青的 cyberpunk 风格。
    变量名沿用旧版 (--navy/--blue/--card 等)，避免大改所有引用点，只换实际颜色值/圆角大小。
    核心配色: 背景深邃近黑 (#090D16)，主互动色亮蓝 (#3B82F6→#06B6D4 渐层)，
    成功/收入翡翠绿 (#10B981)，警示/支出珊瑚红 (#EF4444)。圆角比上一版明显加大加柔和。 */
@@ -618,9 +617,7 @@ tr:hover { background: rgba(59,130,246,0.05); }
 @keyframes sidebar-slide-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 
 /* ---------- Dashboard header / greeting ---------- */
-/* 2026-10-12: 参考 anben.html 的欢迎横幅 (玻璃卡片+渐层光晕+右上角大图标装饰)，
-   原本只是普通的"问候语 + 日期"两行字，现在包一层跟仪表盘其他卡片一致的玻璃质感容器，
-   视觉上更像一个"欢迎 Hero 区块"而不是裸文字。*/
+/* 问候语 + 日期包一层跟其他卡片一致的玻璃容器，带点渐层光晕，当作欢迎横幅。*/
 .dash-header {
   position: relative;
   display: flex; justify-content: space-between; align-items: flex-start;

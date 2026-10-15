@@ -28,11 +28,7 @@ class FieldConfig {
   final bool defaultToday;
   final Map<String, String>? options;
   final String? fkResource;
-  // 2026-09-30: 之前这个模型完全没读 fk_filter (比如 tags 要按 module 分组只显示对应分类那些)，
-  // 手机端的 fk 下拉框因此一直显示"这个资源的全部行"，不管网站端 config 有没有设 fk_filter——
-  // 之前只有少数几个模块用到 tags 的 fk_filter，凑巧没人发现；这次一口气把 reminders/journal_
-  // entries/contacts 都换成按 module 分组的标签之后，才第一次真的看得出来这个洞 (比如联系人的
-  // 标签下拉会看到提醒模块的标签混进来)。
+  // fk_filter 没解析就会显示这个资源的全部行，不管 config 有没有限定 (比如 tags 按 module 分组)。
   final Map<String, dynamic>? fkFilter;
   final num? min;
   final num? max;

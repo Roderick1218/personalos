@@ -45,12 +45,9 @@ $config = [
             'priority'    => ['type' => 'select', 'label' => '优先级', 'default' => 'medium',
                 'options' => ['low' => '低', 'medium' => '中', 'high' => '高', 'urgent' => '紧急']],
             'due_date'    => ['type' => 'date', 'label' => '截止日期'],
-            // 2026-10-12: created_at/completed_at 两个栏位数据库本来就有 (created_at 新增时
-            // DEFAULT now() 自动写入；completed_at 之前只是空摆着没人用)，只是从来没放进表单/
-            // 列表配置里，所以用户完全看不到。标成 readonly——表单只显示不能手动改，提交时也会
-            // 被整个跳过不送出 (见 app.js submitForm / resource_form_screen.dart 对 readonly 的处理)。
-            // 真正让 completed_at 被写入的逻辑在 supabase_bridge.js / supabase_bridge.dart 的
-            // update() 里：status 改成 done 才自动盖上当下时间，改回 todo 就清空。
+            // created_at/completed_at 数据库里本来就有，只是没放进表单配置，所以之前看不到。
+            // readonly 让表单只显示不能改，提交时也不会送出这两个字段。真正写入 completed_at
+            // 的逻辑在 supabase_bridge.js/.dart 的 update() 里，status 改 done 才盖时间。
             'created_at'   => ['type' => 'datetime', 'label' => '创建时间', 'readonly' => true],
             'completed_at' => ['type' => 'datetime', 'label' => '完成时间', 'readonly' => true],
         ],
@@ -89,7 +86,7 @@ $config = [
     ],
 
     'journal_entries' => [
-        // 2026-10-12: 用户要求把"日记"改名成"备忘录" (底层表名/字段都不动，纯粹是显示名称跟文案)。
+        // 叫"备忘录"只是显示名称，底层表名/字段都还是 journal_entries，没动。
         'label' => '备忘录', 'group' => 'personal', 'icon' => '📓', 'display_field' => 'entry_date',
         'fields' => [
             'entry_date' => ['type' => 'date', 'label' => '日期', 'required' => true, 'default_today' => true],

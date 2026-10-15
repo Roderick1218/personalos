@@ -35,10 +35,8 @@ class AppState {
     return data;
   }
 
-  // 2026-09-30: 跟网站端 app.js 的 invalidateFkCache() 是同一个用途——新增/编辑/删除一笔资料后，
-  // 要把这个 resource 的 fk 缓存清掉，不然别的表单的下拉框还是拿旧的那份 (比如在"标签管理"新建了
-  // 一个标签，"联系人"表单的标签下拉却还是看不到，因为 fkCache['tags'] 从第一次读过就没再更新过)。
-  // 这个 Flutter 版本之前完全没有做这件事，是这次才发现的漏洞——网站那边一直都有做。
+  // 新增/编辑/删除一笔资料后要清掉这个 resource 的 fk 缓存，不然别的表单下拉框还是旧数据
+  // (跟网站端 app.js 的 invalidateFkCache() 同一个用途)。
   static void invalidateFk(String resource) {
     fkCache.remove(resource);
   }

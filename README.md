@@ -28,17 +28,23 @@
 
 ---
 
-## 0.1 2026-10-12 这轮的更新摘要
+## 0.1 这轮改了什么
 
-- **UI 整体重新设计 (v6.0)**：参考用户提供的设计稿，主色调从单一荧光青色改成蓝→青渐变 + 各模块各自配色，圆角大幅加大变柔和，仪表盘顶部改成玻璃光晕欢迎横幅。纯 CSS 改动 (`css/style.css`)，没有动功能逻辑。
-- **背景服务登入竞态问题修复**：App 背景步数/提醒服务跟主程式各自独立的自动续登令牌会互相抢，偶尔导致被迫重新登入。改成背景服务借用本来就可靠的 30 秒心跳自己检查+续登，大幅降低机率 (`step_service.dart`)。
-- **任务新增「创建时间」「完成时间」自动记录**：`tasks.created_at`/`completed_at`，状态改「已完成」才盖时间戳，改回「未完成」清空；跟标题/描述等无关字段的编辑不受影响。
-- **标签模块化**：提醒/备忘录/联系人的标签从自由文字改成跟任务/财务一样的下拉选择 (`tags.module` 分类)，同时修掉 App 和网站各自独立存在的「fk_filter 没套用」「fkCache 没失效」的 bug。
-- **「日记」改名「备忘录」**：纯显示名称/文案变更，底层表名 `journal_entries` 不变。备忘录内容列表显示修正 (`white-space:pre-wrap`)，App 端改成「先看只读内容，点编辑才进表单」。
-- **银行账户删除保护**：账户底下有薪资记录会先警告「会连同 N 笔薪资记录 (含 EPF/SOCSO/EIS 供款、自动生成交易) 一并永久删除」，确认后才真的级联删除，不会再让使用者看到数据库原始外键错误。
-- **时区显示修正**：网站列表、App 编辑表单里好几处 datetime 字段漏了 `.toLocal()` 转换，显示时间少 8 小时的问题一并修掉。
+UI 重新配色，蓝→青渐变换掉原本单一荧光青，圆角也放大了，纯 CSS，没动逻辑。
 
-修改 `config_resources.php` 之后**必须**重新生成 `config_resources.json`（网站 + App `assets/` 各一份）才会生效，光改 `.php` 不会有任何效果——这是本轮踩过的坑，细节见第 7 节。
+App 背景服务跟主程式各自会自动续登，偶尔两边抢时机导致被迫重新登入，改成背景服务借用本来就在跑的 30 秒心跳自己续登，问题基本解决了。
+
+任务加了创建时间和完成时间，状态改成已完成才盖时间，改回未完成就清空，跟标题描述这些字段的编辑无关。
+
+提醒、备忘录、联系人的标签以前是自由输入，现在改成跟任务一样的下拉选择，顺手修了 App 和网站各自存在的下拉筛选跟缓存没刷新的 bug。
+
+日记改名叫备忘录了，就是换个名字，表还是 journal_entries。备忘录列表之前换行显示不出来，修了；App 那边点进去先看内容，要改再点编辑，省得手滑改错。
+
+银行账户底下有薪资记录时不能直接删，以前会丢一串数据库错误，现在会先说清楚要连带删掉哪些记录，确认了才真的删。
+
+列表和表单里几个时间栏位忘了转本地时区，显示会差 8 小时，一起修了。
+
+改 `config_resources.php` 记得重新生成 `config_resources.json`，不然网站和 App 都不会有变化，细节看第 7 节。
 
 ---
 
@@ -190,7 +196,7 @@ $$;
    $config = require "C:\\xampp\\htdocs\\personal_os\\config_resources.php";
    file_put_contents("C:\\xampp\\htdocs\\personal_os\\config_resources.json", json_encode($config, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
    ```
-   跑完记得 `Copy-Item config_resources.json` 到 App 的 `assets\config_resources.json` 再重新编译 APK，不然 App 端的表单/下拉还是旧设定。**只改 `.php` 不做这一步，网站和 App 完全看不出任何变化**——2026-10-12 这轮真的在这里卡过一次。
+   跑完记得 `Copy-Item config_resources.json` 到 App 的 `assets\config_resources.json` 再重新编译 APK，不然 App 端的表单/下拉还是旧设定。只改 `.php` 不做这一步，网站和 App 完全看不出任何变化，这里卡过一次。
 
 2. 新表：Supabase 建表 + RLS + admin policy + php 配置 + 两边桥接若有特殊逻辑
 3. 网站：本机 `C:\xampp\htdocs\personal_os` 可能自动同步 InfinityFree。网址：`https://personalos.infinityfree.me`

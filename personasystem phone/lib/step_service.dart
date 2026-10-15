@@ -8,31 +8,23 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'main.dart' show kSupabaseUrl, kSupabaseAnonKey;
 import 'supabase_bridge.dart' show daysBetween;
 
-/// 2026-09-30 重要发现: flutter_local_notifications 的 zonedSchedule() (排定未来某个时间点
-/// 自动触发) 在这台手机上完全测不出结果——闹钟本身每次都准时触发 (系统 AlarmManager 记录证实)，
-/// 但触发之后那条通知从来没有真正贴出来过，换了好几种排查方向 (ProGuard/Gson 泛型签名、
-/// 拿掉 ongoing/actions 等进阶设置、换电池设置) 都没用。直接用 .show() 立即触发一条通知
-/// 则完全正常——证明问题不是"vivo 系统整个拦掉这个 App 的通知"，是 zonedSchedule 那条"排程 +
-/// 系统闹钟 + 背景 receiver 重建通知"的机制本身在这台机器上失效 (静默失败，查不到任何崩溃记录)。
-/// 解法: 不再依赖 zonedSchedule/AlarmManager，改成用这个本来就每 30 秒跑一次、已经证实稳定的
+/// flutter_local_notifications 的 zonedSchedule() 在这台 vivo 手机上不可靠：闹钟准时触发
+/// (AlarmManager 记录证实)，但通知从来没真正贴出来，换电池设置/ProGuard 规则都没用。
+/// 直接 .show() 立即触发则完全正常，所以问题出在 zonedSchedule 这条排程机制本身，不是
+/// 系统整个拦掉通知。不再依赖它，改成用这个本来就每 30 秒跑一次、已经证实稳定的
 /// 前台服务心跳，自己去查有没有到期的提醒，到了就直接呼叫 .show() (立即触发，已确认在这台机器
 /// 上可靠) ——等于自己实现了一个轮询式的"排程"，牺牲一点点精确度 (最多晚 30 秒)，换来真正能用。
 
-/// 2026-09-29: 用户明确要求"随时都能追踪步数，App 关掉/锁屏也要继续记"——
-/// 原本那版只有 App 开着的时候才听传感器，现在改成真正的 Android 前台常驻服务
-/// (flutter_foreground_task)，服务跑在独立的背景 isolate 里，跟主 App 的生命周期脱钩。
-/// Android 系统规定这种常驻后台服务必须搭配一条看得到的通知 (不能偷偷摸摸背景跑)，
-/// 用户已经确认可以接受这条低调的"正在记录步数中"提示。
+/// 步数要 App 关掉/锁屏也继续记，所以用真正的 Android 前台常驻服务 (flutter_foreground_task)，
+/// 跑在独立的背景 isolate 里，跟主 App 生命周期脱钩。Android 规定常驻后台服务要搭配一条
+/// 看得到的通知，没法完全隐藏，低调的"正在记录步数中"提示算是能接受的折中。
 ///
 /// 背景 isolate 是独立的 Dart 环境，不能直接用主 isolate 已经登入好的 Supabase client——
 /// 这里在背景 isolate 里重新 initialize 一次 Supabase (读的是同一份本地持久化的登入 session，
 /// 不用重新登入)，才能在背景把步数写回 daily_metrics。
 class StepService {
-  // 2026-10-01: 这个要是 nullable——一开始是 null (代表"这个 App 进程这次还没收到背景服务的
-  // 推送")，不能默认 0，不然仪表盘那边 "snapshot.data ?? metric?['steps']" 永远会拿到这个假的
-  // 0 (0 不是 null，?? 不会往后 fallback 到数据库真正查到的 metric?['steps'])，导致每次重开
-  // App、还没收到下一次 30 秒心跳推送之前，仪表盘会显示"今日步数: 0"，即使数据库里其实已经有
-  // 正确的步数了 (用户原话: "步数都没更新啊" ——其实背景同步一直是对的，只是画面读错了来源)。
+  // 一定要 nullable，不能默认 0——不然仪表盘的 "snapshot.data ?? metric?['steps']" 永远
+  // 拿到这个假 0，不会 fallback 到数据库真正的步数，重开 App 瞬间会显示"今日步数: 0"。
   static int? _todaySteps;
   static final StreamController<int> _controller = StreamController<int>.broadcast();
 
@@ -94,12 +86,8 @@ class StepService {
     }
   }
 
-  /// 换账号时必须调用。背景服务跑在独立的 isolate 里，它在启动那一刻就把当时那份登入
-  /// session 收进了自己的 Supabase client —— 之后主 App 换成别的账号，它完全看不到，
-  /// 会继续把步数写进旧账号的 daily_metrics、也只查旧账号的提醒；更麻烦的是它定时
-  /// refreshSession() 时会把旧 token 写回共用存档，把新登入的 session 挤掉 (使用者看到的
-  /// 就是"换个账号之后通知和步数就坏了，甚至账号被登出")。停掉再重开，让新的 isolate
-  /// 重新读当前 session，才会真的跟着换人。
+  /// 换账号时必须调用。背景服务启动时就把当时的 session 收进自己的 client 了，
+  /// 主 App 换账号它感觉不到，会继续写旧账号的数据。停掉重开让它重新读当前 session。
   static Future<void> restart() async {
     await stop();
     _todaySteps = null;
@@ -275,18 +263,11 @@ class _StepTaskHandler extends TaskHandler {
   Future<void> _ensureSupabase() async {
     if (_supabaseReady) return;
     try {
-      // 2026-10-12 重要发现: 背景 isolate 跟主 App isolate 是两个各自独立的 GoTrueClient，
-      // 却共用同一份 SharedPreferences 存档。Supabase 的 refresh token 是"一次性"的——
-      // 用掉就旋转成新的一组。如果两边都开着各自的 autoRefreshToken 定时器 (默认行为)，
-      // 只要两边的续期时机撞在一起，其中一边一定会拿着"已经被对方用掉"的旧 refresh token
-      // 去续期而失败。大多时候 gotrue 够聪明会直接发现"我手上这份 session 其实还没过期"
-      // 而不登出，但背景 isolate 这颗 Dart Timer 在真正长时间背景执行时(Android 省电/doze)
-      // 不保证准时触发——真的拖到它手上的 access token 也已经过期才尝试续期，这次就会被
-      // gotrue 判定成"session 真的失效了"，直接清空共用存档——使用者下次开 App 就会被
-      // 强制要求重新登入，而且完全没感觉到哪里出错 (这正是"手机时不时会断出登入"的成因)。
-      // 解法: 背景 isolate 关掉它自己内建的 autoRefreshToken 定时器，改成靠本来就每 30 秒
-      // 跑一次、由前台服务驱动、更准时可靠的心跳自己去检查+续期 (见 _ensureFreshSession)，
-      // 主 App isolate 维持原本默认设定 (App 在前景才会跑，跟着生命周期自动开关)。
+      // 背景 isolate 跟主 App isolate 是两个独立的 GoTrueClient，却共用同一份登入存档。
+      // Refresh token 是一次性的，两边各自的自动续期定时器撞在一起会互抢，背景这边的
+      // Dart Timer 在系统省电模式下又不保证准时，拖到过期才续期就会被判真失效、直接登出。
+      // 关掉背景的内建定时器，改成靠前台服务那个稳定的 30 秒心跳自己检查续期 (见下面
+      // _ensureFreshSession)，主 isolate 维持原本设定不动。
       await Supabase.initialize(
         url: kSupabaseUrl,
         anonKey: kSupabaseAnonKey,
@@ -301,10 +282,7 @@ class _StepTaskHandler extends TaskHandler {
     _boundUserId = Supabase.instance.client.auth.currentSession?.user.id;
   }
 
-  // 用这个心跳本身的 30 秒节奏当"续期时钟"，而不是依赖 GoTrueClient 内建、在背景执行时
-  // 不保证准时的 Dart Timer——session 快过期 (isExpired 本身就留了缓冲) 就主动续一次，
-  // 让背景 isolate 的 access token 几乎不会真的撑到过期才被迫用一个可能已经被主 App
-  // 轮换掉的旧 refresh token 去续期 (那种情况下 gotrue 才会真的判定登出、清空共用存档)。
+  // 借这个 30 秒心跳当续期时钟，比等 GoTrueClient 内建的定时器靠谱。
   Future<void> _ensureFreshSession() async {
     final session = Supabase.instance.client.auth.currentSession;
     if (session == null || !session.isExpired) return;
@@ -362,11 +340,8 @@ class _StepTaskHandler extends TaskHandler {
         onConflict: 'user_id,metric_date',
       );
     } catch (_) {
-      // 2026-10-01: 加一次"重新整理登入 session 再试一次"——这个背景服务的 Supabase client
-      // 是独立 initialize() 出来的一份，登入 token 一般一小时就会过期，正常情况下会自动续期，
-      // 但这个背景 isolate 长时间没有真正的网络活动时 (比如被系统限制背景网络、或长时间没打开
-      // App)，不确定自动续期的计时器有没有确实跑起来过。失败了先手动催一次续期，能成功就代表
-      // 真的是 token 过期，下次心跳就会恢复正常；续期也失败就真的是网络不通，等下一次心跳再试。
+      // 失败先手动催一次续期再试——能成功就是 token 过期，下次心跳会恢复正常；
+      // 续期也失败就是真的网络不通，等下一次心跳再试。
       try {
         await Supabase.instance.client.auth.refreshSession();
         await Supabase.instance.client.from('daily_metrics').upsert(
@@ -390,11 +365,8 @@ class _StepTaskHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) async {
-    // 30 秒一次的心跳：① 先用这次心跳顺便检查+续期 session (见 _ensureFreshSession)；
-    // ② 保险起见再同步一次步数 (万一某次传感器事件的写入失败了)；③ 用上次记住的开机
-    // 累计步数重新跑一次 baseline 检查——这样跨过午夜之后最多 30 秒内就会自动归零，
-    // 不用等用户实际走出第一步或者重开 App；④ 检查有没有到期的提醒该弹；⑤ 检查有没有
-    // 进入提醒窗口的订阅续费/生日。
+    // 30 秒心跳：续期 session、补一次步数同步、跑 baseline 检查 (跨午夜最多 30 秒内归零)、
+    // 查提醒和订阅/生日。
     await _ensureSupabase();
     await _ensureFreshSession();
     if (_lastRawSteps != null) {
