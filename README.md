@@ -1,20 +1,81 @@
-# 安本（Anben）
+# Anben (安本)
 
-给以后的自己、以及接手的 AI 看的**当前状态说明书**。读这一份即可，不必再把旧 changelog 当现状。
+Anben is a personal life-management app — tasks, habits, a daily journal/memo, contacts, money (accounts, transactions, salary, EPF/SOCSO/EIS, subscriptions, fixed deposits), reports, and reminders. It has a website and an Android app, both talking straight to the same Supabase backend, so the data is always the same place.
 
-- 产品对外名称：**安本**（不再叫「个人生活 OS / 个人系统」）
-- 网站：`C:\xampp\htdocs\personal_os\`
-- App：`C:\Users\whb user\personasystem\`（短路径 `C:\Users\WHBUSE~1\personasystem`）
-- 历史演进长文（v1～v4）：`project_personal_life_os.md` —— **已过时**，只查「为什么当年这样设计」时再打开，不要按里面的登录方式/架构改代码。
-- English version: [`README.en.md`](README.en.md)（内容跟这份中文版一一对应）
-
-最后一次大更新：**2026-10-12**。
+This file covers how it's built and how to run/change it. English first, 中文 in the second half below.
 
 ---
 
-## 0. 画面预览
+## English
 
-| 今日仪表盘 | 任务管理 (含自动创建/完成时间) |
+### Screenshots
+
+| Dashboard | Tasks (auto created/completed time) |
+|---|---|
+| ![Dashboard](screenshots/dashboard.png) | ![Tasks](screenshots/tasks.png) |
+
+| Transactions | Bank accounts (delete protection) |
+|---|---|
+| ![Transactions](screenshots/transactions.png) | ![Bank accounts](screenshots/bank_accounts.png) |
+
+| Memos (used to be called "Journal") |
+|---|
+| ![Memos](screenshots/memos.png) |
+
+### What's in it
+
+Tasks (with created/completed timestamps), projects, habit check-ins, memos, a quick inbox, contacts with birthday reminders, links, tags scoped per module, expense categories, bank/cash accounts, transactions with live balances, salary with EPF's 3 sub-accounts plus SOCSO and EIS, subscription renewal reminders, fixed deposits, weekly/monthly/yearly reports, general reminders, global search, and on the app: background step tracking and local notifications.
+
+Sign-up needs a real email and the OTP code sent to it (8 digits, not the usual 6). Forgot-password is self-service through a fresh OTP — there's no admin reset. The UI shows your display name, never the email; only an admin can see emails, under User Management. Deleting a user from there wipes their data and their login entirely.
+
+Backup: a regular user can export their own data. An admin can export everything, including auth records with password hashes — that export is as sensitive as a password itself.
+
+### How it's built
+
+```
+Browser  →  index.html + js/app.js + js/supabase_bridge.js  ──┐
+                                                                ▼
+Phone app →  Flutter (api_service.dart + supabase_bridge.dart) →  Supabase
+                                                                (Postgres + Auth + RLS)
+```
+
+No custom backend server. The old `api.php`/`db.php` are leftovers, not used anymore. `config_resources.php` is still very much alive — it's where every field/label/dropdown is defined — but it isn't run live; after editing it you regenerate a `config_resources.json` that the website and app actually read (see "Making a change" below, this one's easy to forget and ship nothing).
+
+The real logic lives in two files that mirror each other: `js/supabase_bridge.js` for the website, `lib/supabase_bridge.dart` for the app. Editing one doesn't touch the other — keep them in sync by hand.
+
+Data isolation is Postgres RLS (`auth.uid() = user_id`), not app code. The client only ever holds the anon key.
+
+### Making a change
+
+Changing a field: edit `config_resources.php`, regenerate the JSON, copy it to the app's `assets/`, bump the website's `?v=`, rebuild the APK.
+
+```php
+<?php
+$config = require "C:\\xampp\\htdocs\\personal_os\\config_resources.php";
+file_put_contents("C:\\xampp\\htdocs\\personal_os\\config_resources.json", json_encode($config, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+```
+
+The JSON's top level is that array itself — don't wrap it in anything. Skip the copy-to-app step and the app keeps using the old config even after a rebuild; that's bitten me before.
+
+```
+cd /d C:\Users\WHBUSE~1\personasystem
+flutter build apk --release
+flutter install -d <device-id>
+```
+
+If a JS/CSS change "doesn't show up" on the website, it's almost always a forgotten `?v=` bump in `index.html`.
+
+### Known limitations
+
+The website's reminders aren't a real background process — close the tab and they stop. The app does have a real foreground step-tracking service, but it's not medical-grade. Full-database backups don't include the schema, so restoring somewhere new means running the schema file first. Re-registering an email that was never verified can occasionally return odd results from Supabase.
+
+---
+
+## 中文
+
+### 截图
+
+| 仪表盘 | 任务 (自动记创建/完成时间) |
 |---|---|
 | ![仪表盘](screenshots/dashboard.png) | ![任务](screenshots/tasks.png) |
 
@@ -22,33 +83,23 @@
 |---|---|
 | ![财务记账](screenshots/transactions.png) | ![银行账户](screenshots/bank_accounts.png) |
 
-| 备忘录 (原「日记」) |
+| 备忘录 (以前叫「日记」) |
 |---|
 | ![备忘录](screenshots/memos.png) |
 
----
+### 这是什么
 
-## 0.1 这轮改了什么
+安本是我自己在用的个人生活管理系统：任务、习惯、备忘录、联系人、财务（账户、记账、薪资、EPF/SOCSO/EIS、订阅、定存）、报表、提醒。有网站和安卓 App 两个入口，两边都直接连同一个 Supabase，数据是一份。
 
-UI 重新配色，蓝→青渐变换掉原本单一荧光青，圆角也放大了，纯 CSS，没动逻辑。
+### 功能
 
-App 背景服务跟主程式各自会自动续登，偶尔两边抢时机导致被迫重新登入，改成背景服务借用本来就在跑的 30 秒心跳自己续登，问题基本解决了。
+任务（带创建/完成时间）、项目、习惯打卡、备忘录、快速收件箱、联系人（生日提醒）、链接、按模块分类的标签、收支分类、银行/现金账户、带实时余额的记账、含 EPF 三户口的薪资加 SOCSO、EIS、订阅续费提醒、定存、周/月/年报表、通用提醒、全局搜索，App 上还有背景步数记录和本地通知。
 
-任务加了创建时间和完成时间，状态改成已完成才盖时间，改回未完成就清空，跟标题描述这些字段的编辑无关。
+注册要填真实邮箱，收一组验证码（8 位，不是常见的 6 位）。忘记密码走同样的验证码流程，没有管理员帮你重设这回事。界面上看到的是名字，不是邮箱，只有管理员在用户管理里才看得到邮箱；在那边删一个账号，连数据带登入一起清掉。
 
-提醒、备忘录、联系人的标签以前是自由输入，现在改成跟任务一样的下拉选择，顺手修了 App 和网站各自存在的下拉筛选跟缓存没刷新的 bug。
+备份：普通用户能导出自己的数据；管理员能导出全部，包含登入密码的哈希值，这份导出文件要当密码一样小心保管。
 
-日记改名叫备忘录了，就是换个名字，表还是 journal_entries。备忘录列表之前换行显示不出来，修了；App 那边点进去先看内容，要改再点编辑，省得手滑改错。
-
-银行账户底下有薪资记录时不能直接删，以前会丢一串数据库错误，现在会先说清楚要连带删掉哪些记录，确认了才真的删。
-
-列表和表单里几个时间栏位忘了转本地时区，显示会差 8 小时，一起修了。
-
-改 `config_resources.php` 记得重新生成 `config_resources.json`，不然网站和 App 都不会有变化，细节看第 7 节。
-
----
-
-## 1. 现在的架构
+### 怎么搭的
 
 ```
 浏览器  →  index.html + js/app.js + js/supabase_bridge.js  ──┐
@@ -57,150 +108,23 @@ App 背景服务跟主程式各自会自动续登，偶尔两边抢时机导致�
                                                               (Postgres + Auth + RLS)
 ```
 
-没有自己的 PHP 后端。`api.php` / `db.php` 是死代码，只当参考；`config_resources.php` 不是死代码，**仍是真正的配置来源**，只是不会被服务器即时执行——改完要手动跑一次 PHP CLI 生成 `config_resources.json`（网站/App 实际读的是这份 JSON），细节见第 7 节。真正的业务逻辑在两份桥接文件 (`js/supabase_bridge.js` / `lib/supabase_bridge.dart`)，必须**手动同步**（改 JS 不会自动改 Dart）。
+没有自己的后端服务器。旧的 `api.php`/`db.php` 留着但没在用了。`config_resources.php` 还是活的，所有字段、标签、下拉选项都定义在这里，只是它不会被即时执行——改完要重新生成一份 `config_resources.json`，网站和 App 读的是这份 JSON（见下面"要改东西的话"，这一步很容易忘，忘了就等于白改）。
 
-数据隔离靠 **RLS**（`auth.uid() = user_id`）。前端只放 **anon key**，绝对不要放 `service_role`。管理员例外规则用 `public.is_admin()`。
+真正的逻辑在两份互相对应的文件里：网站是 `js/supabase_bridge.js`，App 是 `lib/supabase_bridge.dart`。改一边不会自动改另一边，要手动同步。
 
-网站 UI 文案不要写「多人共用 / 只看得到自己的东西」；技术上仍是多账号 + RLS。
+数据隔离靠 Postgres 的 RLS (`auth.uid() = user_id`)，不是靠代码挡，前端只拿得到 anon key。
 
----
+### 要改东西的话
 
-## 2. 功能一览（用户能用到的）
+改字段：改 `config_resources.php`，重新生成 JSON，复制到 App 的 `assets/`，网站的 `?v=` 加一，重新编译 APK。
 
-任务（含创建/完成时间自动记录）/ 项目 / 习惯打卡 / 备忘录（原「日记」）/ 收件箱 / 联系人（生日提醒）/ 链接 / 标签（按模块分类）/ 收支分类 / 银行与现金（删除保护）/ 记账（收入、支出、转账，余额现算）/ 动态薪资 + EPF 三户口 / SOCSO、EIS / 订阅到期扣费 / 定期存款 / 周月年报 / 通用提醒 / 全局搜索 / 步数（仅 App）/ 本地通知（仅 App）
-
-**账号：**
-
-- 注册：名字 + 真实邮箱 + 密码 → **必须在网站/App 输入邮件里的全部数字验证码** 才算成功（通常 8 位，不要只输 6 位）
-- 登录：邮箱 + 密码（未完成验证码的账号不能登录）
-- 忘记密码：自己收验证码重设，**没有**管理员「重设为 123456」
-- 界面显示 **名字（display_name）**，不显示邮箱；邮箱只在管理员「用户管理」里看
-- 旧用户名登录：桥接层仍可能把不含 `@` 的标识转成 `xxx@personalos.local`（遗留账号）
-
-**管理员「用户管理」：** 改名字 / 邮箱 / 角色；删除会清业务数据 + `profiles` + **`auth.users`**（邮箱可以再注册）。不能删自己，至少留一个 admin。
-
-**备份：**
-
-- 普通用户：「导出我的数据」= 当前账号业务表 INSERT
-- 管理员：「导出全库备份」走 RPC `admin_export_full_sql()`：全部 public 表 + `auth.users` / `auth.identities`（含密码哈希）。**不含** CREATE TABLE / RLS / 函数。搬家：先跑 `个人系统_schema_supabase.sql`，再跑这份 SQL。文件当机密保管。
-
----
-
-## 3. 文件地图
-
-```
-C:\xampp\htdocs\personal_os\
-  index.html                 登录 + 主壳；script ?v= 必须 bump
-  css/style.css              深色赛博风
-  js/app.js                  全部 UI
-  js/supabase_bridge.js      网站后端（Auth / CRUD / 仪表盘 / 备份）
-  img/                       产品图标（来自用户 SVG）
-  screenshots/               README 用的画面截图
-  config_resources.json      资源配置（真正被网站/App读取的那份，见第 7 节）
-  个人系统_schema_supabase.sql   建表+RLS 参考（可能略旧，以线上库为准）
-  README.md                  本文件（现状，中文）
-  README.en.md               本文件的英文版
-  project_personal_life_os.md  历史 changelog
-  anben-app.apk              最新打包好的 App 安装包（装新版本/给别人测试用）
-  anben_app_source.zip       App 完整源码打包（给之后要接手改 App 的人/环境用）
-
-C:\Users\whb user\personasystem\
-  lib/main.dart, api_service.dart, supabase_bridge.dart, screens/, step_service.dart
-  assets/logo.png, assets/config_resources.json
-  android/.../ic_launcher*   桌面图标
+```php
+<?php
+$config = require "C:\\xampp\\htdocs\\personal_os\\config_resources.php";
+file_put_contents("C:\\xampp\\htdocs\\personal_os\\config_resources.json", json_encode($config, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
 ```
 
-网站当前缓存版本（改 JS/CSS 后请再 +1）：`supabase_bridge.js?v=22`，`app.js?v=20261012b`，`style.css?v=20261012c`。
-
----
-
-## 4. 登录 / 邮箱（2026-10 现状）
-
-### 4.1 产品流程
-
-1. `signUp` 只寄 OTP，即使有 session 也立刻 `signOut`
-2. `verifyOtp` type=`signup` 成功才写 profile 并进入系统
-3. 登录若邮箱未确认则拒绝
-4. 忘记密码：`resetPasswordForEmail` + `verifyOtp` type=`recovery` + `updateUser({password})`
-
-邮件模板必须带 `{{ .Token }}`。**Confirm signup / Reset password 不要放可点击确认链接**，否则点链接会绕过「必须在页面输 OTP」。
-
-### 4.2 Dashboard 必开项
-
-- Authentication → Email → **Confirm email = ON**（`mailer_autoconfirm: false`）
-- **Custom SMTP = ON**，当前 Brevo：
-
-```
-Host:     smtp-relay.brevo.com
-Port:     587
-Username: 以 Brevo「SMTP settings → Login」为准（曾从 bc2b62001 变成 bc2c82001，填错会 535）
-Password: Standard SMTP key（xsmtpsib-…，不要 Short 15 位，不要 API key xkeysib-）
-Sender:   必须是 Brevo 里已 Verified 的寄件人
-          （现为 leeyongjun1218@e.newera.edu.my）
-Sender name: 安本
-```
-
-不要开启 Brevo「Block unauthorized IP for SMTP keys」。
-
-发信失败常见原因：Username 和 Brevo Login 不一致、SMTP key 认证失败、Sender 未验证。Confirm email 打开后才会真正发注册信。
-
-### 4.3 相关数据库对象
-
-- `handle_new_user()`：signup 后写 `profiles`（display_name / email / role），**已无** `must_change_password`
-- `admin_update_user_email(uuid, text)`
-- `admin_delete_auth_user(uuid)`：删 `auth.identities` + `auth.users`
-- `admin_export_full_sql()`：完整数据 SQL（仅 admin）
-- **已删除：** `admin_reset_user_password`、`profiles.must_change_password`
-
-管理员删用户后若仍提示邮箱已注册：多半是旧 bug 留下的孤儿 `auth.users`。应用现在会 RPC 删 Auth。
-
----
-
-## 5. 管理员与 RLS（线上已有，换项目要补）
-
-```sql
-CREATE OR REPLACE FUNCTION public.is_admin() RETURNS boolean
-LANGUAGE sql SECURITY DEFINER STABLE
-AS $$
-  SELECT COALESCE((SELECT role = 'admin' FROM public.profiles WHERE id = auth.uid()), false);
-$$;
-```
-
-`profiles`：自己能看自己；admin 可 SELECT/INSERT/UPDATE/DELETE 全部。  
-带 `user_id` 的业务表：自己的行；admin 可读（全库备份）。  
-**业务列表查询仍要 `.eq('user_id', 当前用户)`**，避免管理员在普通模块里看到别人的数据；别人的数据只应出现在「用户管理」。
-
-前端 **不要** 用 service_role。Admin 建号：让对方自己注册，再改 `profiles.role`。
-
----
-
-## 6. 搬家 / 备份
-
-1. 新 Supabase 跑最新 schema（表、RLS、函数；以线上为准）
-2. 配 SMTP + Confirm email + 邮件模板 Token
-3. 管理员下载全库 SQL，先 schema 后数据
-4. 另备份网站+App 源码、`config_resources.json`
-5. SMTP / Brevo 不会进 SQL，要单独记
-
-全库 SQL 含密码哈希，**当机密**。不含网站 UI。
-
----
-
-## 7. 日常改功能
-
-1. 改字段：`config_resources.php` → 生成 `config_resources.json` → 复制到 App `assets/` → 网站 bump `?v=` → App 重编 APK
-
-   生成 JSON 的具体命令 (PHP CLI，`$config` 来自文件末尾的 `return $config;`，JSON 顶层就是这个 map 本身，**不要**包一层 `{ok,resources}`)：
-   ```php
-   <?php
-   $config = require "C:\\xampp\\htdocs\\personal_os\\config_resources.php";
-   file_put_contents("C:\\xampp\\htdocs\\personal_os\\config_resources.json", json_encode($config, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-   ```
-   跑完记得 `Copy-Item config_resources.json` 到 App 的 `assets\config_resources.json` 再重新编译 APK，不然 App 端的表单/下拉还是旧设定。只改 `.php` 不做这一步，网站和 App 完全看不出任何变化，这里卡过一次。
-
-2. 新表：Supabase 建表 + RLS + admin policy + php 配置 + 两边桥接若有特殊逻辑
-3. 网站：本机 `C:\xampp\htdocs\personal_os` 可能自动同步 InfinityFree。网址：`https://personalos.infinityfree.me`
-4. App：
+JSON 顶层就是这个数组本身，不要包别的东西。漏了复制到 App 这一步，App 重新编译之后用的还是旧配置——这个坑踩过。
 
 ```
 cd /d C:\Users\WHBUSE~1\personasystem
@@ -208,44 +132,43 @@ flutter build apk --release
 flutter install -d <设备ID>
 ```
 
-测试机曾用：`10AG2S0S2U001S0`（V2553）。改完 JS 看不到：99% 是没 bump `index.html` 的 `?v=`。
+网站改了 JS/CSS 却看不到效果，十次有九次是忘了在 `index.html` 里把 `?v=` 加一。
+
+### 已知的限制
+
+网站的提醒不是真的背景常驻，分页关掉就不会弹了。App 有真正的前台步数服务，但不是医疗级精准度。全库备份不含建表结构，搬到新环境要先跑一次建表 SQL。同一个邮箱没验证完又拿去重新注册，Supabase 有时候会返回奇怪的结果。
 
 ---
 
-## 8. 已知限制
+## 维护备忘 / Maintenance notes
 
-- 网站提醒不是 24h 后台；App 有前台步数服务 + 打开时同步通知，不是医疗级计步
-- 全库备份不含 schema；schema 文件可能比线上旧
-- 点邮件魔法链接仍可能确认邮箱——靠模板去掉链接
-- 同一邮箱未验证又再注册，Supabase 可能返回空 identities
-- `personal_os\personal_os\` 子目录是旧副本，不要当生产文件改
-- InfinityFree 不能跑 PHP 连 Postgres，也不能给 App 当 API（Website Guard）
+这部分比较杂，中英文混着记，怎么顺手怎么来。/ This section is maintenance detail, mixed languages, whatever's faster to write.
 
----
+**登录/邮箱设置** — Supabase Dashboard 要开 Authentication → Email → Confirm email = ON，并且设 Custom SMTP（目前用 Brevo: `smtp-relay.brevo.com:587`，账号密码看 Brevo 后台「SMTP settings」，寄件人要是已验证的地址）。邮件模板要带 `{{ .Token }}`，Confirm signup / Reset password 的模板**不要放可点击的确认链接**，不然会跳过「必须在页面输入验证码」这一步。发信失败多半是 SMTP 账密不对或寄件人没验证。
 
-## 9. 连线（给维护脚本，勿写进前端）
+**RLS 规则**（线上已经设好，换新项目要重建）：
+```sql
+CREATE OR REPLACE FUNCTION public.is_admin() RETURNS boolean
+LANGUAGE sql SECURITY DEFINER STABLE
+AS $$
+  SELECT COALESCE((SELECT role = 'admin' FROM public.profiles WHERE id = auth.uid()), false);
+$$;
+```
+`profiles` 自己能看自己，admin 能看全部；其他业务表也是自己的行自己看，admin 能读全部（给全库备份用）。业务列表查询还是要自己带 `.eq('user_id', ...)`，不要指望只靠 RLS，不然 admin 在一般页面也会看到别人的东西。
 
-- Project：`xpbtyfattbqsaasmokoy`  
-  `https://xpbtyfattbqsaasmokoy.supabase.co`
-- anon：`js/supabase_bridge.js` / App `main.dart` 顶部（可公开）
-- Pooler：`aws-0-ap-southeast-2.pooler.supabase.com:6543`  
-  user `postgres.xpbtyfattbqsaasmokoy`，密码见本机 `Downloads\supabase password.txt`  
-  直连 IPv6 主机这台电脑不通，必须 pooler
-- 本机网站：`http://localhost/personal_os/`（Apache：`C:\xampp\apache_start.bat`）
-- PHP：`C:\php83\php.exe`
+**搬家步骤**：新 Supabase 项目先跑一次建表 SQL，配好 SMTP 和邮件模板，再导出旧项目的全库数据跑进去。SMTP 这些第三方设置不会出现在 SQL 里，要另外记一份。
 
----
+**文件在哪**：
+```
+C:\xampp\htdocs\personal_os\          网站
+C:\Users\whb user\personasystem\      App 源码（真正在改的那份）
+personasystem phone/                   这个 git 仓库里存的 App 源码副本，推送前要先同步
+anben-app.apk                          打包好的安装包
+anben_app_source.zip                   App 源码打包（不会进 git，太大）
+个人系统_schema_supabase.sql            建表 SQL 参考，可能比线上旧
+project_personal_life_os.md            更早的开发记录，纯历史，不要照里面的架构改代码
+```
 
-## 10. 给 AI 的硬规则
+**连线信息**（不要写进前端代码）：Supabase project `xpbtyfattbqsaasmokoy`，pooler 是 `aws-0-ap-southeast-2.pooler.supabase.com:6543`（这台电脑连不了 IPv6，必须走 pooler），密码在本机 `Downloads\supabase password.txt`。
 
-1. 网站和 App 功能保持一致；改桥接改两边。
-2. 侧栏/登录显示 **display_name**，不要把邮箱当昵称。
-3. 普通 CRUD 必须过滤当前 `user_id`，即使用户是 admin。
-4. 不要恢复「密码重设为 123456」。
-5. 不要把产品文案改回「多人共用」。
-6. 不要把 service_role 放进 JS/Dart。
-7. 改 `app.js` / `supabase_bridge.js` / `style.css` 必须 bump `index.html` 版本号。
-8. 图标：用户 SVG → 网站 `img/`、App `assets/logo.png` 与 Android mipmap。
-9. **现状以本 README 为准**；`project_personal_life_os.md` 只是考古。
-10. 改了 `config_resources.php` 之后一定要重新生成 `config_resources.json` 并复制到网站根目录 + App `assets/`，否则改了等于没改（见第 7 节）。
-11. 改完中文版 README 记得同步改 `README.en.md`，两份内容要对得上。
+**写代码时留意**：网站和 App 功能要对齐，改一边记得改另一边；侧栏显示名字不要显示邮箱；业务查询一律带上 user_id 过滤；不要把 service_role key 放进前端代码；改了 `app.js`/`supabase_bridge.js`/`style.css` 记得 bump `index.html` 的版本号；改了 `config_resources.php` 记得照上面的步骤重新生成 JSON。
