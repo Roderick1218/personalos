@@ -39,7 +39,7 @@ Phone app →  Flutter (api_service.dart + supabase_bridge.dart) →  Supabase
                                                                 (Postgres + Auth + RLS)
 ```
 
-No custom backend server. The old `api.php`/`db.php` are leftovers, not used anymore. `config_resources.php` is still very much alive — it's where every field/label/dropdown is defined — but it isn't run live; after editing it you regenerate a `config_resources.json` that the website and app actually read (see "Making a change" below, this one's easy to forget and ship nothing).
+No custom backend server — an earlier MySQL-based version had one (`api.php`/`db.php`), both removed once everything moved to Supabase. `config_resources.php` is still very much alive — it's where every field/label/dropdown is defined — but it isn't run live; after editing it you regenerate a `config_resources.json` that the website and app actually read (see "Making a change" below, this one's easy to forget and ship nothing).
 
 The real logic lives in two files that mirror each other: `js/supabase_bridge.js` for the website, `lib/supabase_bridge.dart` for the app. Editing one doesn't touch the other — keep them in sync by hand.
 
@@ -108,7 +108,7 @@ The website's reminders aren't a real background process — close the tab and t
                                                               (Postgres + Auth + RLS)
 ```
 
-没有自己的后端服务器。旧的 `api.php`/`db.php` 留着但没在用了。`config_resources.php` 还是活的，所有字段、标签、下拉选项都定义在这里，只是它不会被即时执行——改完要重新生成一份 `config_resources.json`，网站和 App 读的是这份 JSON（见下面"要改东西的话"，这一步很容易忘，忘了就等于白改）。
+没有自己的后端服务器——早期用 MySQL 时有过一个（`api.php`/`db.php`），全部搬去 Supabase 之后两个文件都删掉了。`config_resources.php` 还是活的，所有字段、标签、下拉选项都定义在这里，只是它不会被即时执行——改完要重新生成一份 `config_resources.json`，网站和 App 读的是这份 JSON（见下面"要改东西的话"，这一步很容易忘，忘了就等于白改）。
 
 真正的逻辑在两份互相对应的文件里：网站是 `js/supabase_bridge.js`，App 是 `lib/supabase_bridge.dart`。改一边不会自动改另一边，要手动同步。
 
@@ -164,9 +164,8 @@ C:\xampp\htdocs\personal_os\          网站
 C:\Users\whb user\personasystem\      App 源码（真正在改的那份）
 personasystem phone/                   这个 git 仓库里存的 App 源码副本，推送前要先同步
 anben-app.apk                          打包好的安装包
-anben_app_source.zip                   App 源码打包（不会进 git，太大）
+anben_app_source.zip                   App 源码打包
 个人系统_schema_supabase.sql            建表 SQL 参考，可能比线上旧
-project_personal_life_os.md            更早的开发记录，纯历史，不要照里面的架构改代码
 ```
 
 **连线信息**（不要写进前端代码）：Supabase project `xpbtyfattbqsaasmokoy`，pooler 是 `aws-0-ap-southeast-2.pooler.supabase.com:6543`（这台电脑连不了 IPv6，必须走 pooler），密码在本机 `Downloads\supabase password.txt`。
