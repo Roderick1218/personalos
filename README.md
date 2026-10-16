@@ -164,7 +164,6 @@ C:\xampp\htdocs\personal_os\          网站
 C:\Users\whb user\personasystem\      App 源码（真正在改的那份）
 personasystem phone/                   这个 git 仓库里存的 App 源码副本，推送前要先同步
 anben-app.apk                          打包好的安装包
-anben_app_source.zip                   App 源码打包
 个人系统_schema_supabase.sql            建表 SQL 参考，可能比线上旧
 ```
 

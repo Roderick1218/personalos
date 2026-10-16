@@ -72,5 +72,3 @@ test_output/
 # App binaries (GitHub 100MB limit)
 *.zip
 *.aab
-# 源码压缩包体积很小 (不含 build/.gradle 这些生成出来的东西)，跟 APK 一样直接进 git。
-!anben_app_source.zip
