@@ -750,6 +750,7 @@ tr:hover { background: rgba(59,130,246,0.05); }
 .item-card-sub { font-size: 12px; color: var(--muted); }
 .item-card-body { font-size: 13px; color: var(--text-body); margin-bottom: 10px; }
 .item-card-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.note-preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
 
 /* ---------- Login screen (多用户登录) ---------- */
 #login-screen {

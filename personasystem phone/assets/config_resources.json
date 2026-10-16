@@ -263,9 +263,18 @@
                 "fk_filter": {
                     "module": "journal"
                 }
+            },
+            "created_at": {
+                "type": "datetime",
+                "label": "创建时间",
+                "readonly": true
             }
         },
         "filters": [
+            {
+                "field": "content",
+                "type": "text_search"
+            },
             {
                 "field": "entry_date",
                 "type": "daterange"

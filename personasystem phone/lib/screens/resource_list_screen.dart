@@ -481,6 +481,83 @@ class ResourceListScreenState extends State<ResourceListScreen> {
     );
   }
 
+  static const Map<int, String> _moodEmoji = {1: '😞', 2: '🙁', 3: '😐', 4: '🙂', 5: '😄'};
+
+  // 备忘录改成跟一般笔记 App 一样的卡片：标题是日期+时间 (同一天能有好几条，靠时间分开)，
+  // 正文截断预览几行，标签/心情放在下面，点一下还是先看只读详情。
+  Widget _journalCard(Map<String, dynamic> row) {
+    final id = row['id'].toString();
+    final tagId = row['tag_id'];
+    final tagLabel = (tagId != null) ? AppState.fkLabel('tags', tagId) : null;
+    final mood = row['mood'] is num ? (row['mood'] as num).toInt() : null;
+    final content = (row['content'] ?? '').toString();
+    String timeLabel = '';
+    final createdAt = row['created_at'];
+    if (createdAt != null) {
+      final dt = DateTime.tryParse(createdAt.toString())?.toLocal();
+      if (dt != null) timeLabel = DateFormat('HH:mm').format(dt);
+    }
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _showJournalDetail(row),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${row['entry_date'] ?? ''}${timeLabel.isNotEmpty ? ' · $timeLabel' : ''}',
+                      style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.text),
+                    ),
+                  ),
+                  if (mood != null) Padding(padding: const EdgeInsets.only(right: 4), child: Text(_moodEmoji[mood] ?? '')),
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: const Icon(Icons.delete_outline, color: AppColors.danger, size: 20),
+                    onPressed: () async {
+                      if (await _confirmDelete()) _delete(id);
+                    },
+                  ),
+                ],
+              ),
+              if (content.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    content,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: AppColors.textMuted),
+                  ),
+                ),
+              if (tagLabel != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(tagLabel, style: const TextStyle(fontSize: 12, color: AppColors.accent)),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _rowTile(Map<String, dynamic> row) {
     final title = row[cfg.displayField]?.toString() ?? '#${row['id']}';
     final id = row['id'].toString();
@@ -488,12 +565,6 @@ class ResourceListScreenState extends State<ResourceListScreen> {
       title: Text(widget.resourceName == 'daily_metrics' ? title : title),
       subtitle: Text(_subtitle(row)),
       onTap: () async {
-        // 备忘录内容太长不会出现在列表 subtitle，点一下先弹只读详情，避免手滑改到内容；
-        // 其他资源还是点了就进编辑。
-        if (widget.resourceName == 'journal_entries') {
-          await _showJournalDetail(row);
-          return;
-        }
         await Navigator.push(
           context,
           MaterialPageRoute(
@@ -573,6 +644,14 @@ class ResourceListScreenState extends State<ResourceListScreen> {
             child: _rowTile(row),
           );
         },
+      );
+    }
+
+    if (widget.resourceName == 'journal_entries') {
+      return ListView.builder(
+        padding: const EdgeInsets.only(bottom: 8),
+        itemCount: _rows.length,
+        itemBuilder: (context, index) => _journalCard(_rows[index] as Map<String, dynamic>),
       );
     }
 

@@ -102,6 +102,7 @@ class DashboardScreenState extends State<DashboardScreen> {
     final tasks = d['tasks_today'] as List<dynamic>;
     final metric = d['metric_today'] as Map<String, dynamic>?;
     final journal = d['journal_today'] as Map<String, dynamic>?;
+    final journalTodayCount = (d['journal_today_count'] as num?)?.toInt() ?? 0;
     final upcomingSubs = d['upcoming_subscriptions'] as List<dynamic>? ?? [];
     final upcomingBirthdays = d['upcoming_birthdays'] as List<dynamic>? ?? [];
     final bankAccounts = d['bank_accounts'] as List<dynamic>? ?? [];
@@ -334,7 +335,7 @@ class DashboardScreenState extends State<DashboardScreen> {
             },
           ),
           _tintCard(
-            '📓 今日备忘录',
+            journalTodayCount > 1 ? '📓 今日备忘录 · 共 $journalTodayCount 条' : '📓 今日备忘录',
             AppColors.surface,
             journal == null
                 ? [const Text('今天还没写', style: TextStyle(color: AppColors.textMuted))]

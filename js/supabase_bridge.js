@@ -568,8 +568,10 @@ async function buildDashboard(userId) {
   for (const l of (logs || [])) logMap[l.habit_id] = !!l.completed;
   out.habits = (habits || []).map(h => ({ ...h, checked_today: logMap[h.id] || false }));
 
-  const { data: journalToday } = await sb.from('journal_entries').select('*').eq('user_id', userId).eq('entry_date', today).maybeSingle();
-  out.journal_today = journalToday;
+  // 备忘录现在一天能写多条，不能再用 maybeSingle (超过一条会报错)，改成拿当天最新一条 + 总数。
+  const { data: journalRows } = await sb.from('journal_entries').select('*').eq('user_id', userId).eq('entry_date', today).order('created_at', { ascending: false });
+  out.journal_today = (journalRows && journalRows[0]) || null;
+  out.journal_today_count = (journalRows || []).length;
 
   const { data: txnsToday } = await sb.from('transactions').select('*').eq('user_id', userId).eq('transaction_date', today).order('id', { ascending: false });
   out.transactions_today = txnsToday || [];
@@ -1017,8 +1019,13 @@ const SupabaseBridge = {
         // 「用户管理」走 admin_list_users，不受这条限制。
         let query = sb.from(resource).select('*').eq('user_id', userId);
         query = applyFilters(query, payload.filters);
-        const orderCol = resource === 'daily_metrics' ? 'metric_date' : 'id';
-        const { data, error } = await query.order(orderCol, { ascending: false }).limit(500);
+        // id 是 UUID，按它倒序等于乱序；备忘录要按日期/创建时间排才能一眼找到最近写的。
+        if (resource === 'journal_entries') {
+          query = query.order('entry_date', { ascending: false }).order('created_at', { ascending: false });
+        } else {
+          query = query.order(resource === 'daily_metrics' ? 'metric_date' : 'id', { ascending: false });
+        }
+        const { data, error } = await query.limit(500);
         if (error) throw error;
 
         // 银行账户列表额外算出当前余额 + 打码账号，跟旧版 api.php 的 list 特殊处理一样

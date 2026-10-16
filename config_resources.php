@@ -93,8 +93,10 @@ $config = [
             'content'    => ['type' => 'textarea', 'label' => '内容 (支持 Markdown)', 'placeholder' => '记录重要事项、想法...'],
             'mood'       => ['type' => 'number', 'label' => '心情 (1-5，1=很差，5=很好)', 'min' => 1, 'max' => 5, 'placeholder' => '1-5'],
             'tag_id'     => ['type' => 'fk', 'label' => '标签 (选填)', 'fk_resource' => 'tags', 'fk_filter' => ['module' => 'journal']],
+            'created_at' => ['type' => 'datetime', 'label' => '创建时间', 'readonly' => true],
         ],
         'filters' => [
+            ['field' => 'content', 'type' => 'text_search'],
             ['field' => 'entry_date', 'type' => 'daterange'],
             ['field' => 'tag_id', 'type' => 'fk_select'],
         ],

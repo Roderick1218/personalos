@@ -115,8 +115,9 @@ CREATE TABLE journal_entries (
   tag_id     UUID REFERENCES tags(id) ON DELETE SET NULL, -- 2026-09-30: 原本自由文字 tags (JSONB)
                                                             -- 改成跟其他模块一样的单一标签外键
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (user_id, entry_date)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  -- 原本这里有 UNIQUE (user_id, entry_date)，是当初叫"日记"时特意限制一天一条；
+  -- 改名"备忘录"后应该跟其他笔记一样随时能加，已经去掉这条限制。
 );
 CREATE TRIGGER trg_journal_updated_at BEFORE UPDATE ON journal_entries
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();

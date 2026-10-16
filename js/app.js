@@ -1080,7 +1080,7 @@ async function renderDashboard() {
           : '<p class="empty">今天还没记录 (手机 App 会自动同步步数)</p>'}
       </div>
       <div class="card">
-        <h3>📓 今日备忘录</h3>
+        <h3>📓 今日备忘录${d.journal_today_count > 1 ? ` · 共 ${d.journal_today_count} 条` : ''}</h3>
         ${d.journal_today ? `<p>${escapeHtml((d.journal_today.content || '').slice(0, 80))}...</p>` : '<p class="empty">今天还没写</p>'}
       </div>
     </div>
@@ -1329,7 +1329,7 @@ function renderCategoryBreakdown(data, cfg) {
   return `<div class="card"><h3>📊 支出分类占比</h3>${bars}</div>`;
 }
 
-const CARD_GRID_RESOURCES = new Set(['subscriptions', 'bookmarks', 'contacts', 'fixed_deposits']);
+const CARD_GRID_RESOURCES = new Set(['subscriptions', 'bookmarks', 'contacts', 'fixed_deposits', 'journal_entries']);
 
 function renderItemGrid(resourceName, data) {
   if (!data.length) return '<div class="card"><p class="empty">还没有数据</p></div>';
@@ -1461,7 +1461,63 @@ function renderItemGrid(resourceName, data) {
     return `<div class="item-grid">${cards}</div>`;
   }
 
+  if (resourceName === 'journal_entries') {
+    const moodEmoji = { 1: '😞', 2: '🙁', 3: '😐', 4: '🙂', 5: '😄' };
+    journalCardRows = {};
+    const cards = data.map(j => {
+      journalCardRows[j.id] = j;
+      const tagLabel = j.tag_id ? fkLabel('tags', j.tag_id) : '';
+      const tagColor = j.tag_id ? fkColor('tags', j.tag_id) : '#9CA3AF';
+      const dt = j.created_at ? new Date(j.created_at) : null;
+      const timeLabel = (dt && !isNaN(dt)) ? `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}` : '';
+      const preview = (j.content || '').trim();
+      return `
+        <div class="item-card" style="cursor:pointer;" onclick="showJournalDetail('${j.id}')">
+          <div class="item-card-header">
+            <div class="item-card-icon" style="background:var(--icon-orange-bg);color:var(--icon-orange-fg);">📓</div>
+            <div>
+              <div class="item-card-title">${escapeHtml(j.entry_date)}${timeLabel ? ` · ${timeLabel}` : ''}</div>
+              <div class="item-card-sub">${j.mood ? moodEmoji[j.mood] || '' : ''}</div>
+            </div>
+          </div>
+          <div class="item-card-body note-preview">${preview ? escapeHtml(preview) : '<span class="empty">（空白）</span>'}</div>
+          <div class="item-card-footer">
+            ${tagLabel ? `<span class="badge" style="background:${tagColor}22;color:${tagColor};">${escapeHtml(tagLabel)}</span>` : '<span></span>'}
+            <span onclick="event.stopPropagation();">
+              <button class="btn small secondary" onclick='openForm("journal_entries", "${j.id}")'>编辑</button>
+              <button class="btn small danger" onclick='deleteRow("journal_entries", "${j.id}")'>删除</button>
+            </span>
+          </div>
+        </div>`;
+    }).join('');
+    return `<div class="item-grid">${cards}</div>`;
+  }
+
   return '';
+}
+
+// 备忘录卡片点一下先看只读详情 (避免手滑改到内容)，"编辑"按钮才真的进表单，跟 App 端同一套逻辑。
+let journalCardRows = {};
+function showJournalDetail(id) {
+  const row = journalCardRows[id];
+  if (!row) return;
+  const moodEmoji = { 1: '😞', 2: '🙁', 3: '😐', 4: '🙂', 5: '😄' };
+  const tagLabel = row.tag_id ? fkLabel('tags', row.tag_id) : '';
+  const modalRoot = document.getElementById('modal-root');
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeForm()">
+      <div class="modal">
+        <h3>📓 ${escapeHtml(row.entry_date)}</h3>
+        ${tagLabel ? `<p style="color:var(--muted);margin:0 0 8px;">标签：${escapeHtml(tagLabel)}</p>` : ''}
+        ${row.mood ? `<p style="color:var(--muted);margin:0 0 8px;">心情：${moodEmoji[row.mood] || ''} ${row.mood}/5</p>` : ''}
+        <div style="white-space:pre-wrap;max-height:60vh;overflow:auto;">${escapeHtml(row.content || '')}</div>
+        <div class="modal-actions">
+          <button class="btn secondary" onclick="closeForm()" type="button">关闭</button>
+          <button class="btn" onclick="closeForm(); openForm('journal_entries', '${id}')" type="button">编辑</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ---------------- Generic resource list page ----------------

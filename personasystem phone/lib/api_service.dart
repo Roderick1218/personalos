@@ -154,8 +154,14 @@ class ApiService {
 
     var query = sb.from(resource).select('*').eq('user_id', userId);
     query = applyFilters(query, filters);
-    final orderCol = resource == 'daily_metrics' ? 'metric_date' : 'id';
-    final rows = await query.order(orderCol, ascending: false).limit(500);
+    // id 是 UUID，按它倒序等于乱序；备忘录要按日期/创建时间排才能一眼找到最近写的。
+    List<dynamic> rows;
+    if (resource == 'journal_entries') {
+      rows = await query.order('entry_date', ascending: false).order('created_at', ascending: false).limit(500);
+    } else {
+      final orderCol = resource == 'daily_metrics' ? 'metric_date' : 'id';
+      rows = await query.order(orderCol, ascending: false).limit(500);
+    }
 
     // 银行账户列表额外算出当前余额 + 打码账号 (跟网站端 supabase_bridge.js 的 list 特殊处理一样，
     // current_balance 是靠交易记录算出来的，不是存在表里的栏位，通用 select('*') 拿不到)。

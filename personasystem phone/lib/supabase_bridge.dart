@@ -504,7 +504,10 @@ Future<Map<String, dynamic>> buildDashboard(String userId) async {
   for (final l in logs) logMap[l['habit_id'].toString()] = l['completed'] == true;
   out['habits'] = habits.map((h) => {...h, 'checked_today': logMap[h['id'].toString()] ?? false}).toList();
 
-  out['journal_today'] = await sb.from('journal_entries').select('*').eq('user_id', userId).eq('entry_date', today).maybeSingle();
+  // 备忘录现在一天能写多条，不能再用 maybeSingle (超过一条会报错)，改成拿当天最新一条 + 总数。
+  final journalRows = await sb.from('journal_entries').select('*').eq('user_id', userId).eq('entry_date', today).order('created_at', ascending: false);
+  out['journal_today'] = journalRows.isNotEmpty ? journalRows.first : null;
+  out['journal_today_count'] = journalRows.length;
 
   final txnsToday = await sb.from('transactions').select('*').eq('user_id', userId).eq('transaction_date', today).order('id', ascending: false);
   out['transactions_today'] = txnsToday;
